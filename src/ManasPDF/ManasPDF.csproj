@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ManasPDF</RootNamespace>
+    <AssemblyName>ManasPDF</AssemblyName>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>ManasPDF</PackageId>
+    <Version>0.1.0-alpha</Version>
+    <Authors>ManasPDF Contributors</Authors>
+    <Description>High-performance PDF rendering library for .NET. GPU-accelerated (Direct2D) with CPU fallback. Supports text extraction, links, encryption (password and certificate).</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Informal061/ManasPDF</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Informal061/ManasPDF</RepositoryUrl>
+    <PackageTags>pdf;pdf-renderer;pdf-viewer;direct2d;gpu;freetype</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Pack settings -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <!-- Native DLL files for NuGet package -->
+  <ItemGroup>
+    <!-- x64 native DLLs -->
+    <None Include="runtimes\win-x64\native\ManasPDFCore.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+    <None Include="runtimes\win-x64\native\freetype.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+    <None Include="runtimes\win-x64\native\jpeg62.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+    <None Include="runtimes\win-x64\native\openjp2.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+    <!-- Build targets -->
+    <None Include="ManasPDF.targets" Pack="true" PackagePath="build\net8.0" />
+    <None Include="ManasPDF.targets" Pack="true" PackagePath="buildTransitive\net8.0" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

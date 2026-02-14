@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>ManasPDF.Wpf</RootNamespace>
+    <AssemblyName>ManasPDF.Wpf</AssemblyName>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>ManasPDF.Wpf</PackageId>
+    <Version>0.1.0-alpha</Version>
+    <Authors>ManasPDF Contributors</Authors>
+    <Description>WPF PdfViewer control for ManasPDF. Drop-in PDF viewer with zoom, scroll, page navigation, text selection and search. GPU-accelerated rendering.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Informal061/ManasPDF</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Informal061/ManasPDF</RepositoryUrl>
+    <PackageTags>pdf;pdf-viewer;wpf;wpf-control;usercontrol;direct2d</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ManasPDF\ManasPDF.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

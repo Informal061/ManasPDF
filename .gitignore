@@ -1,0 +1,59 @@
+# Build outputs
+bin/
+obj/
+build/
+out/
+x64/
+x86/
+Debug/
+Release/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ncb
+*.opensdf
+*.sdf
+*.pdb
+*.ilk
+*.aps
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Compiled DLLs (keep only source, not build artifacts)
+*.dll
+*.lib
+*.exp
+*.obj
+*.o
+
+# But DO track pre-built third-party libraries
+!src/PDFCore/Projects/lib/*.lib
+!src/PDFCore/ProjectHarfBuzz/lib/*.lib
+!src/PDFCore/jpeglib/lib/*.lib
+!src/PDFCore/openjpeg/lib/*.lib
+
+# Runtime native DLLs for NuGet packaging (keep .gitkeep, ignore DLLs)
+!src/ManasPDF/runtimes/
+src/ManasPDF/runtimes/**/*.dll
+
+# Generated NuGet packages
+nupkg/

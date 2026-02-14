@@ -1,0 +1,16 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- x64 native DLLs (win-x64 only) -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\runtimes\win-x64\native\ManasPDFCore.dll"
+          Link="ManasPDFCore.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\runtimes\win-x64\native\freetype.dll"
+          Link="freetype.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\runtimes\win-x64\native\jpeg62.dll"
+          Link="jpeg62.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\runtimes\win-x64\native\openjp2.dll"
+          Link="openjp2.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+
+</Project>

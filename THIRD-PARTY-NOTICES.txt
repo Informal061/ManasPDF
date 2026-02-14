@@ -1,0 +1,161 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+ManasPDF incorporates the following third-party libraries.
+The notices below are provided in compliance with their respective licenses.
+
+Portions of this software are copyright (c) The FreeType Project
+(www.freetype.org). All rights reserved.
+
+===============================================================================
+1. FreeType (https://freetype.org/)
+   License: The FreeType License (FTL)
+===============================================================================
+
+Copyright (C) 1996-2024 David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This software is provided 'as-is', without any express or implied warranty.
+The authors grant the right to use, copy, modify, distribute, and sell this
+software and its documentation for any purpose under the FreeType License.
+
+Redistribution in binary form must include an acknowledgment in the
+documentation that the software is based in part on the work of the FreeType
+Team. See https://freetype.org/license.html for the full license text.
+
+===============================================================================
+2. HarfBuzz (https://harfbuzz.github.io/)
+   License: Old MIT License
+===============================================================================
+
+Copyright (c) 2010-2022 Google, Inc.
+Copyright (c) 2015-2020 Ebrahim Byagowi
+Copyright (c) 2019,2020 Facebook, Inc.
+Copyright (c) 2012,2015 Mozilla Foundation
+Copyright (c) 2011 Codethink Limited
+Copyright (c) 2008,2010 Nokia Corporation and/or its subsidiary(-ies)
+Copyright (c) 2009 Keith Stribley
+Copyright (c) 2011 Martin Hosken and SIL International
+Copyright (c) 2007 Chris Wilson
+Copyright (c) 2005,2006,2020,2021,2022,2023 Behdad Esfahbod
+Copyright (c) 2004,2007,2008,2009,2010,2013,2021,2022,2023 Red Hat, Inc.
+Copyright (c) 1998-2005 David Turner and Werner Lemberg
+Copyright (c) 2016 Igalia S.L.
+Copyright (c) 2022 Matthias Clasen
+Copyright (c) 2018,2021 Khaled Hosny
+Copyright (c) 2018,2019,2020 Adobe, Inc
+Copyright (c) 2013-2015 Alexei Podtelezhnikov
+
+Permission is hereby granted, without written agreement and without
+license or royalty fees, to use, copy, modify, and distribute this
+software and its documentation for any purpose, provided that the
+above copyright notice and the following two paragraphs appear in
+all copies of this software.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR
+DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN
+IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+THE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING,
+BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE. THE SOFTWARE PROVIDED HEREUNDER IS
+ON AN "AS IS" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO
+PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+===============================================================================
+3. libjpeg-turbo (https://libjpeg-turbo.org/)
+   License: Modified (3-clause) BSD License / IJG License
+===============================================================================
+
+Copyright (C) 2009-2024 D. R. Commander. All Rights Reserved.
+Copyright (C) 2015 Viktor Szathmary. All Rights Reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+- Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+- Neither the name of the libjpeg-turbo Project nor the names of its
+  contributors may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS",
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+===============================================================================
+4. OpenJPEG (https://www.openjpeg.org/)
+   License: 2-Clause BSD License
+===============================================================================
+
+Copyright (c) 2002-2014, Universite catholique de Louvain (UCL), Belgium
+Copyright (c) 2002-2014, Professor Benoit Macq
+Copyright (c) 2003-2014, Antonin Descampe
+Copyright (c) 2003-2009, Francois-Olivier Devaux
+Copyright (c) 2005, Herve Drolon, FreeImage Team
+Copyright (c) 2002-2003, Yannick Verschueren
+Copyright (c) 2001-2003, David Janssens
+Copyright (c) 2011-2012, Centre National d'Etudes Spatiales (CNES), France
+Copyright (c) 2012, CS Systemes d'Information, France
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+===============================================================================
+5. zlib (https://zlib.net/)
+   License: zlib License
+===============================================================================
+
+Copyright (C) 1995-2022 Jean-loup Gailly and Mark Adler
+
+This software is provided 'as-is', without any express or implied warranty.
+In no event will the authors be held liable for any damages arising from the
+use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+Jean-loup Gailly        Mark Adler
+jloup@gzip.org          madler@alumni.caltech.edu
+
+===============================================================================
