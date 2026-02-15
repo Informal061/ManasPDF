@@ -6,6 +6,8 @@
 
 A high-performance, GPU-accelerated PDF rendering engine written in C++ with a .NET wrapper and WPF viewer control.
 
+Developed by **[The Big Studio](https://www.thebigstudio.net)**
+
 > **Alpha Release** - This project is in active development. APIs may change between versions. Not recommended for production use yet. Feedback and bug reports are welcome!
 
 ## Overview
@@ -355,3 +357,7 @@ See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
+
+---
+
+**ManasPDF** is a product of [The Big Studio](https://www.thebigstudio.net) | [Report an Issue](https://github.com/Informal061/ManasPDF/issues)
