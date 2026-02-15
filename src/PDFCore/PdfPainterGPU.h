@@ -147,7 +147,7 @@ namespace pdf
         };
 
         uint32_t _batchColor = 0;
-        bool _batchEvenOdd = false;  // ✅ Track fill mode for batching
+        bool _batchEvenOdd = false;  // Track fill mode for batching
         std::vector<BatchedFill> _fillBatch;
         bool _hasBatchedFills = false;
 
@@ -240,7 +240,7 @@ namespace pdf
             const PdfMatrix& ctm,
             const PdfMatrix& gradientCTM);
 
-        // Pattern brush creation  
+        // Pattern brush creation
         ID2D1Brush* createPatternBrush(const PdfPattern& pattern, const PdfMatrix& ctm);
 
         // Image helpers

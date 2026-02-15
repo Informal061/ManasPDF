@@ -11,7 +11,7 @@
     <!-- NuGet Package Metadata -->
     <PackageId>ManasPDF.Wpf</PackageId>
     <Version>0.1.0-alpha</Version>
-    <Authors>ManasPDF Contributors</Authors>
+    <Authors>The Big Studio</Authors>
     <Description>WPF PdfViewer control for ManasPDF. Drop-in PDF viewer with zoom, scroll, page navigation, text selection and search. GPU-accelerated rendering.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/Informal061/ManasPDF</PackageProjectUrl>

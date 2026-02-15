@@ -207,7 +207,6 @@ namespace pdf
 
         HRESULT hr;
 
-        LogDebug("GPU init: creating WIC bitmap %d x %d (%.1f MB)", _w, _h, (double)_w * _h * 4 / (1024.0 * 1024.0));
 
         // Create WIC Bitmap (per-instance, page-size dependent)
         // WICBitmapCacheOnLoad = contiguous layout (stride == w*4, faster getBuffer)
@@ -219,7 +218,6 @@ namespace pdf
         );
         if (FAILED(hr))
         {
-            LogDebug("ERROR: WIC CreateBitmap failed hr=0x%08X for %d x %d", (unsigned)hr, _w, _h);
             return false;
         }
 
@@ -235,7 +233,6 @@ namespace pdf
         hr = s_d2dFactory->CreateWicBitmapRenderTarget(_wicBitmap, rtProps, &_renderTarget);
         if (FAILED(hr))
         {
-            LogDebug("ERROR: D2D CreateWicBitmapRenderTarget failed hr=0x%08X for %d x %d", (unsigned)hr, _w, _h);
             return false;
         }
 
@@ -265,7 +262,6 @@ namespace pdf
 
             if (FAILED(hr))
             {
-                LogDebug("WARNING: EndDraw failed hr=0x%08X (D2DERR_RECREATE_TARGET=0x%08X)", (unsigned)hr, (unsigned)D2DERR_RECREATE_TARGET);
                 _endDrawFailed = true;
             }
         }
@@ -1445,7 +1441,7 @@ namespace pdf
 
         // ═══════════════════════════════════════════════════════════════
         // BASELINE SNAPPING: Yuvarlama farkından kaynaklanan dikey kayma
-        // düzeltmesi. penY (baseline) bir kez integer'a yuvarlanır,
+        // fixsi. penY (baseline) bir kez integer'a yuvarlanır,
         // böylece aynı satırdaki TÜM glyph'ler aynı Y seviyesine sahip olur.
         // bearingY offset'leri bu sabit baseline'a göre hesaplanır.
         // ═══════════════════════════════════════════════════════════════
@@ -1665,7 +1661,7 @@ namespace pdf
             uint8_t b = rgba[i * 4 + 2];
             uint8_t a = rgba[i * 4 + 3];
 
-            // ✅ FIX: Premultiplied alpha for D2D
+            // FIX: Premultiplied alpha for D2D
             // When a < 255, RGB must be multiplied by alpha/255
             // When a == 0, RGB must be 0 (fully transparent pixel)
             if (a < 255)
@@ -1931,12 +1927,12 @@ namespace pdf
         {
             // ================================================================
             // BitmapBrush + FillGeometry approach
-            // 
+            //
             // This is the most reliable way to draw a transformed image
             // inside a complex clipping path (oval, polygon, etc.)
             //
-            // The brush transform maps bitmap pixel coordinates to 
-            // screen coordinates. D2D reverse-maps each screen pixel 
+            // The brush transform maps bitmap pixel coordinates to
+            // screen coordinates. D2D reverse-maps each screen pixel
             // inside the geometry to find the corresponding bitmap pixel.
             // ================================================================
 
@@ -2265,7 +2261,7 @@ namespace pdf
         if (path.empty()) return;
 
         // If color OR fill mode changed, flush current batch
-        // ✅ FIX: Different fill modes must be in separate batches!
+        // FIX: Different fill modes must be in separate batches!
         if (_hasBatchedFills && (color != _batchColor || evenOdd != _batchEvenOdd))
         {
             flushFillBatch();
@@ -2279,7 +2275,7 @@ namespace pdf
         _fillBatch.push_back(std::move(bf));
 
         _batchColor = color;
-        _batchEvenOdd = evenOdd;  // ✅ Track fill mode
+        _batchEvenOdd = evenOdd;  // Track fill mode
         _hasBatchedFills = true;
 
         // Flush if batch gets too large (increased limit for combined geometry)
@@ -2321,7 +2317,7 @@ namespace pdf
         }
 
         // Set fill mode based on batch setting
-        // ✅ FIX: Use the correct fill mode for this batch
+        // FIX: Use the correct fill mode for this batch
         sink->SetFillMode(_batchEvenOdd ? D2D1_FILL_MODE_ALTERNATE : D2D1_FILL_MODE_WINDING);
 
         // Helper lambda for safe coordinate transformation

@@ -1,5 +1,5 @@
-﻿// pch.cpp: Önceden derlenen üst bilgiye karşılık gelen kaynak dosya
+﻿// pch.cpp: Source file for the precompiled header
 
 #include "pch.h"
 
-// Önceden derlenmiş üst bilgiler kullanılırken bu kaynak dosya, derlemenin başarılı olması için gereklidir.
+// When using precompiled headers, this source file is required for compilation

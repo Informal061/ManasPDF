@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "zlib.h"
 #include "PdfEngine.h"
 #include "PdfDocument.h"
@@ -19,18 +19,16 @@
 #include <mutex>
 #include <chrono>
 
-// ---------------------------------------------
-// File Helper
-// ---------------------------------------------
+// =====================================================
+// File I/O Helper
+// =====================================================
 
 static bool ReadAllBytes(const wchar_t* path, std::vector<uint8_t>& out)
 {
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) return false;
-
     out.assign(std::istreambuf_iterator<char>(ifs),
         std::istreambuf_iterator<char>());
-
     return !out.empty();
 }
 
@@ -38,17 +36,16 @@ static int g_lastStage = 0;
 static FT_Library g_ftLib = nullptr;
 
 // =====================================================
-// ACTIVE DOCUMENT TRACKING
-// Sadece aktif document render edilir, diğerleri skip
+// Active Document Tracking
+// Only the active document is rendered; others return early.
 // =====================================================
 static std::mutex g_activeDocMutex;
 static PDF_DOCUMENT g_activeDocument = nullptr;
-static bool g_useActiveDocumentFilter = true;  // Enable/disable filtering
+static bool g_useActiveDocumentFilter = true;
 
 // =====================================================
-// RENDER MUTEX - Prevent concurrent renders crashing D2D/WIC
-// Multiple threads can request renders simultaneously during zoom;
-// serialize them to prevent resource conflicts
+// Render Mutex
+// Serializes rendering to prevent concurrent D2D/WIC resource conflicts.
 // =====================================================
 static std::mutex g_renderMutex;
 
@@ -73,8 +70,10 @@ void ShutdownFreeType()
     g_ftLib = nullptr;
 }
 
+// =====================================================
+// PDF Object / Page Counting (binary scan)
+// =====================================================
 
-// ---------------------------------------------
 static int CountSubstring(const std::vector<uint8_t>& data, const char* needle)
 {
     size_t n = data.size(), m = std::strlen(needle);
@@ -106,13 +105,11 @@ PDF_API int Pdf_Debug_GetLastStage()
     return g_lastStage;
 }
 
-// ---------------------------------------------
 PDF_API int Pdf_GetVersion()
 {
     return 47;
 }
 
-// ---------------------------------------------
 PDF_API int Pdf_Debug_GetObjectCountFromFile(const wchar_t* path)
 {
     std::vector<uint8_t> data;
@@ -143,16 +140,11 @@ PDF_API int Pdf_Debug_GetObjectCountFromFile(const wchar_t* path)
     return count;
 }
 
-// ---------------------------------------------
 PDF_API int Pdf_Debug_GetPageCountFromFile(const wchar_t* path)
 {
     std::vector<uint8_t> data;
     if (!ReadAllBytes(path, data)) return -1;
-
-    int c1 = CountSubstring(data, "/Type /Page");
-    int c2 = CountSubstring(data, "/Type/Page");
-
-    return c1 + c2;
+    return CountSubstring(data, "/Type /Page") + CountSubstring(data, "/Type/Page");
 }
 
 PDF_API void Pdf_SetZoomState(PDF_DOCUMENT ptr, int isZooming)
@@ -163,7 +155,6 @@ PDF_API void Pdf_SetZoomState(PDF_DOCUMENT ptr, int isZooming)
         g_renderQuality.endZoom();
 }
 
-// ---------------------------------------------
 PDF_API int Pdf_GetRealPageCountFromFile(const wchar_t* path)
 {
     std::vector<uint8_t> data;
@@ -176,7 +167,10 @@ PDF_API int Pdf_GetRealPageCountFromFile(const wchar_t* path)
     return doc.getPageCountFromPageTree();
 }
 
-// ---------------------------------------------
+// =====================================================
+// Document Handle
+// =====================================================
+
 struct PdfDocumentHandle
 {
     std::vector<uint8_t> data;
@@ -184,35 +178,26 @@ struct PdfDocumentHandle
     pdf::PdfTextExtractor textExtractor;
 };
 
-// ---------------------------------------------
+// =====================================================
+// Document Lifecycle
+// =====================================================
+
 PDF_API PDF_DOCUMENT Pdf_OpenDocument(const wchar_t* path)
 {
-    pdf::PdfDebug::Init();
-    LogDebug("=== Opening PDF: %ls ===", path);
-
-    LogDebug("Step 1: Creating PdfDocumentHandle...");
     auto h = new PdfDocumentHandle();
-    LogDebug("Step 1: DONE");
 
-    LogDebug("Step 2: Reading file bytes...");
     if (!ReadAllBytes(path, h->data))
     {
-        LogDebug("ERROR: Failed to read file");
         delete h;
         return nullptr;
     }
-    LogDebug("Step 2: DONE - File size: %zu bytes", h->data.size());
 
-    LogDebug("Step 3: Starting loadFromBytes...");
     if (!h->doc.loadFromBytes(h->data))
     {
-        LogDebug("ERROR: loadFromBytes failed");
         delete h;
         return nullptr;
     }
-    LogDebug("Step 3: loadFromBytes SUCCESS");
 
-    LogDebug("Step 4: Returning handle...");
     return (PDF_DOCUMENT)h;
 }
 
@@ -222,7 +207,10 @@ PDF_API void Pdf_CloseDocument(PDF_DOCUMENT ptr)
     delete reinterpret_cast<PdfDocumentHandle*>(ptr);
 }
 
-// ---------------------------------------------
+// =====================================================
+// Page Info
+// =====================================================
+
 PDF_API int Pdf_GetPageCount(PDF_DOCUMENT ptr)
 {
     if (!ptr) return -1;
@@ -232,7 +220,6 @@ PDF_API int Pdf_GetPageCount(PDF_DOCUMENT ptr)
 PDF_API int Pdf_GetPageSize(PDF_DOCUMENT ptr, int pageIndex, double* w, double* h)
 {
     if (!ptr || !w || !h) return 0;
-
     auto& doc = reinterpret_cast<PdfDocumentHandle*>(ptr)->doc;
     return doc.getPageSize(pageIndex, *w, *h) ? 1 : 0;
 }
@@ -243,7 +230,10 @@ PDF_API int Pdf_GetPageRotate(PDF_DOCUMENT ptr, int pageIndex)
     return reinterpret_cast<PdfDocumentHandle*>(ptr)->doc.getPageRotate(pageIndex);
 }
 
-// ---------------------------------------------
+// =====================================================
+// Raw Page Content Access
+// =====================================================
+
 PDF_API int Pdf_GetPageContent(
     PDF_DOCUMENT ptr,
     int pageIndex,
@@ -251,7 +241,6 @@ PDF_API int Pdf_GetPageContent(
     int outCap)
 {
     if (!ptr) return -1;
-
     auto& doc = reinterpret_cast<PdfDocumentHandle*>(ptr)->doc;
     std::vector<uint8_t> content;
 
@@ -263,12 +252,14 @@ PDF_API int Pdf_GetPageContent(
         return len;
 
     if (len > outCap) len = outCap;
-
     memcpy(out, content.data(), len);
     return len;
 }
 
-// ---------------------------------------------
+// =====================================================
+// Zlib Decompression
+// =====================================================
+
 PDF_API int Pdf_DecompressStream(
     const uint8_t* inData,
     int inSize,
@@ -293,6 +284,10 @@ PDF_API int Pdf_DecompressStream(
     return s.total_out;
 }
 
+// =====================================================
+// Page Rendering (GPU with CPU fallback)
+// =====================================================
+
 static int RenderImpl(
     PDF_DOCUMENT ptr,
     int pageIndex,
@@ -303,45 +298,27 @@ static int RenderImpl(
     int* outH,
     bool useGPU)
 {
-    // =====================================================
-    // ACTIVE DOCUMENT CHECK - Quick skip for inactive docs
-    // =====================================================
+    // Skip rendering for inactive documents (multi-tab optimization)
     if (g_useActiveDocumentFilter)
     {
         std::lock_guard<std::mutex> lock(g_activeDocMutex);
         if (g_activeDocument != nullptr && g_activeDocument != ptr)
-        {
-            // This is not the active document - skip rendering
-            // Return 0 to indicate "no render needed"
-            LogDebug("Skipping render for inactive document (page %d)", pageIndex);
             return 0;
-        }
     }
-
-    LogDebug("=== Rendering page %d, zoom %.2f, GPU=%d ===", pageIndex, zoom, useGPU);
 
     g_lastStage = 10;
 
     if (!ptr || !outW || !outH)
-    {
-        LogDebug("ERROR: Invalid parameters");
         return -1;
-    }
 
     auto h = reinterpret_cast<PdfDocumentHandle*>(ptr);
     auto& doc = h->doc;
 
     g_lastStage = 20;
-    LogDebug("Stage 20: Getting page size");
 
     double wPt = 0, hPt = 0;
     if (!doc.getPageSize(pageIndex, wPt, hPt))
-    {
-        LogDebug("ERROR: Could not get page size");
         return -2;
-    }
-
-    LogDebug("Page size: %.2f x %.2f pt", wPt, hPt);
 
     g_lastStage = 30;
 
@@ -354,30 +331,17 @@ static int RenderImpl(
     const int wPx = (int)std::llround(wPt * scale);
     const int hPx = (int)std::llround(hPt * scale);
 
-    LogDebug("Pixel size: %d x %d", wPx, hPx);
-
     if (wPx <= 0 || hPx <= 0)
-    {
-        LogDebug("ERROR: Invalid pixel dimensions");
         return -3;
-    }
 
-    // WIC/D2D bitmap dimension safety limit
-    // Very large bitmaps can fail to allocate or cause GPU resource exhaustion
-    // 16384 x 16384 = 1GB RGBA, which is a practical safe maximum
+    // Safety limit: 16384x16384 = 1GB RGBA maximum
     const int MAX_BITMAP_DIM = 16384;
     if (wPx > MAX_BITMAP_DIM || hPx > MAX_BITMAP_DIM)
-    {
-        LogDebug("ERROR: Pixel dimensions too large (%d x %d), max=%d", wPx, hPx, MAX_BITMAP_DIM);
         return -4;
-    }
 
     const long long required64 = (long long)wPx * (long long)hPx * 4LL;
     if (required64 <= 0 || required64 > 0x7FFFFFFFLL)
-    {
-        LogDebug("ERROR: Buffer size overflow");
         return -4;
-    }
 
     const int required = (int)required64;
     *outW = wPx;
@@ -391,36 +355,25 @@ static int RenderImpl(
     if (outBufferSize < required)
         return required;
 
-    // =====================================================
-    // CHECK PAGE CACHE FIRST (zero-copy: memcpy directly from cache)
-    // =====================================================
+    // Check page cache first (zero-copy path)
     g_lastStage = 45;
-
     if (pdf::PageRenderCache::instance().getDirect(h, pageIndex, wPx, hPx, outBuffer, required))
     {
-        LogDebug("Cache HIT for page %d", pageIndex);
         g_lastStage = 150;
         return required;
     }
-    LogDebug("Cache MISS for page %d", pageIndex);
 
-    // =====================================================
-    // RENDER MUTEX - Serialize actual rendering to prevent
-    // concurrent D2D/WIC resource conflicts that cause crashes
-    // Size queries and cache hits above don't need this lock
-    // =====================================================
+    // Serialize rendering to prevent concurrent D2D/WIC crashes
     std::lock_guard<std::mutex> renderLock(g_renderMutex);
 
-    // Double-check cache after acquiring lock (another thread may have rendered it)
+    // Double-check cache after acquiring lock
     if (pdf::PageRenderCache::instance().getDirect(h, pageIndex, wPx, hPx, outBuffer, required))
     {
-        LogDebug("Cache HIT (after lock) for page %d", pageIndex);
         g_lastStage = 150;
         return required;
     }
 
     g_lastStage = 50;
-    LogDebug("Stage 50: Starting painter initialization");
 
     std::vector<uint8_t> resultBuffer;
 
@@ -430,7 +383,7 @@ static int RenderImpl(
 
         if (!painter.initialize())
         {
-            LogDebug("GPU initialization failed, falling back to CPU");
+            // GPU init failed, fall back to CPU
             useGPU = false;
             goto CPU_RENDERING;
         }
@@ -441,17 +394,13 @@ static int RenderImpl(
         painter.clear(0xFFFFFFFF);
 
         g_lastStage = 70;
-        LogDebug("Stage 70: Starting GPU renderPageToPainter");
-
         doc.renderPageToPainter(pageIndex, painter);
 
         g_lastStage = 120;
-        LogDebug("Stage 120: GPU rendering complete");
 
-        // Check if EndDraw had a D2D error (device lost, resource exhaustion)
+        // Check for D2D errors (device lost, resource exhaustion)
         if (painter.hasEndDrawError())
         {
-            LogDebug("WARNING: GPU EndDraw failed, falling back to CPU for page %d", pageIndex);
             useGPU = false;
             goto CPU_RENDERING;
         }
@@ -459,27 +408,22 @@ static int RenderImpl(
         resultBuffer = painter.getBuffer();
         if ((int)resultBuffer.size() < required)
         {
-            LogDebug("ERROR: GPU buffer size mismatch (%d vs %d), falling back to CPU", (int)resultBuffer.size(), required);
             useGPU = false;
             goto CPU_RENDERING;
         }
 
         g_lastStage = 140;
-
         std::memcpy(outBuffer, resultBuffer.data(), required);
 
-        // Store in cache
         pdf::PageRenderCache::instance().store(h, pageIndex, wPx, hPx, zoom, resultBuffer);
 
         g_lastStage = 150;
-        LogDebug("Stage 150: GPU rendering finished successfully");
         return required;
     }
 
 CPU_RENDERING:
     {
         const int ssaa = g_renderQuality.getCurrentSSAA();
-        LogDebug("CPU rendering with SSAA=%d", ssaa);
 
         pdf::PdfPainter painter(wPx, hPx, scale, scale, ssaa);
 
@@ -489,38 +433,28 @@ CPU_RENDERING:
         painter.clear(0xFFFFFFFF);
 
         g_lastStage = 70;
-        LogDebug("Stage 70: Starting CPU renderPageToPainter");
-
         doc.renderPageToPainter(pageIndex, painter);
 
         g_lastStage = 120;
-        LogDebug("Stage 120: CPU rendering complete");
 
         resultBuffer = painter.getDownsampledBuffer();
         if ((int)resultBuffer.size() < required)
-        {
-            LogDebug("ERROR: CPU buffer size mismatch");
             return -5;
-        }
 
         g_lastStage = 140;
-
         std::memcpy(outBuffer, resultBuffer.data(), required);
 
-        // Store in cache
         pdf::PageRenderCache::instance().store(h, pageIndex, wPx, hPx, zoom, resultBuffer);
 
         g_lastStage = 150;
-        LogDebug("Stage 150: CPU rendering finished successfully");
         return required;
     }
 }
 
+// =====================================================
+// Render API (GPU-first with SEH protection)
+// =====================================================
 
-
-// ---------------------------------------------
-//         FINAL RENDER (FONT DESTEKLİ)
-// ---------------------------------------------
 PDF_API int PDF_CALL Pdf_RenderPageToRgba(
     PDF_DOCUMENT ptr,
     int pageIndex,
@@ -560,19 +494,16 @@ PDF_API int PDF_CALL Pdf_RenderPageToRgba_CPU(
 }
 
 // =====================================================
-// ACTIVE DOCUMENT API
+// Active Document API (multi-tab optimization)
 // =====================================================
 
-// Set the active document - only this document will be rendered
-// Other documents' render calls will return early (quick skip)
 PDF_API void PDF_CALL Pdf_SetActiveDocument(PDF_DOCUMENT ptr)
 {
     std::lock_guard<std::mutex> lock(g_activeDocMutex);
 
-    // If switching to a different document, optionally clear old cache
+    // Clear previous document's cache when switching
     if (g_activeDocument != nullptr && g_activeDocument != ptr)
     {
-        // Clear previous document's cache to free memory
         auto* oldHandle = reinterpret_cast<PdfDocumentHandle*>(g_activeDocument);
         pdf::PageRenderCache::instance().clearDocument(oldHandle);
     }
@@ -580,21 +511,21 @@ PDF_API void PDF_CALL Pdf_SetActiveDocument(PDF_DOCUMENT ptr)
     g_activeDocument = ptr;
 }
 
-// Get the current active document
 PDF_API PDF_DOCUMENT PDF_CALL Pdf_GetActiveDocument()
 {
     std::lock_guard<std::mutex> lock(g_activeDocMutex);
     return g_activeDocument;
 }
 
-// Enable/disable active document filtering
-// When disabled, all documents render normally (legacy behavior)
 PDF_API void PDF_CALL Pdf_EnableActiveDocumentFilter(bool enable)
 {
     g_useActiveDocumentFilter = enable;
 }
 
-// Clear cache for a specific document
+// =====================================================
+// Cache Management
+// =====================================================
+
 PDF_API void PDF_CALL Pdf_ClearDocumentCache(PDF_DOCUMENT ptr)
 {
     if (!ptr) return;
@@ -602,14 +533,12 @@ PDF_API void PDF_CALL Pdf_ClearDocumentCache(PDF_DOCUMENT ptr)
     pdf::PageRenderCache::instance().clearDocument(handle);
 }
 
-// Clear all render cache
 PDF_API void PDF_CALL Pdf_ClearAllCache()
 {
     pdf::PageRenderCache::instance().clear();
     pdf::GlyphCache::instance().clear();
 }
 
-// Get cache statistics
 PDF_API void PDF_CALL Pdf_GetCacheStats(
     size_t* outHits,
     size_t* outMisses,
@@ -622,9 +551,9 @@ PDF_API void PDF_CALL Pdf_GetCacheStats(
     if (outMemoryMB) *outMemoryMB = pdf::PageRenderCache::instance().memoryUsage() / (1024 * 1024);
 }
 
-// =============================================
-// ENCRYPTION API
-// =============================================
+// =====================================================
+// Encryption API
+// =====================================================
 
 PDF_API int PDF_CALL Pdf_GetEncryptionStatus(PDF_DOCUMENT ptr)
 {
@@ -665,7 +594,7 @@ PDF_API int PDF_CALL Pdf_GetCertRecipientEncryptedKey(
     if (recipientIndex < 0 || recipientIndex >= (int)recipients.size()) return -1;
 
     const auto& encKey = recipients[recipientIndex].encryptedKey;
-    if (!outData) return (int)encKey.size(); // query size mode
+    if (!outData) return (int)encKey.size();
 
     int copyLen = std::min((int)encKey.size(), outDataSize);
     if (copyLen > 0) memcpy(outData, encKey.data(), copyLen);
@@ -721,17 +650,16 @@ PDF_API int PDF_CALL Pdf_GetCertRecipientKeyAlgorithm(
     return (int)oid.size();
 }
 
-
-// =============================================
-// TEXT EXTRACTION API IMPLEMENTATION
-// =============================================
+// =====================================================
+// Text Extraction API
+// =====================================================
 
 PDF_API int PDF_CALL Pdf_ExtractPageText(PDF_DOCUMENT ptr, int pageIndex)
 {
     if (!ptr) return -1;
     auto* h = reinterpret_cast<PdfDocumentHandle*>(ptr);
 
-    // Zaten extract edilmişse cache'den döndür
+    // Return from cache if already extracted
     if (h->textExtractor.hasPage(pageIndex))
         return h->textExtractor.getGlyphCount(pageIndex);
 
@@ -768,7 +696,7 @@ PDF_API int PDF_CALL Pdf_GetExtractedTextUtf8(
     PDF_DOCUMENT ptr, int pageIndex,
     char* outBuffer, int maxLen)
 {
-    // Glyph bazlı text seçimi kullanılıyor, UTF-8 export şimdilik devre dışı
+    // Glyph-based text selection is used; UTF-8 export is not yet implemented
     if (outBuffer && maxLen > 0) outBuffer[0] = '\0';
     return 0;
 }
@@ -788,7 +716,7 @@ PDF_API void PDF_CALL Pdf_ClearAllTextCache(PDF_DOCUMENT ptr)
 }
 
 // =====================================================
-// LINK API
+// Link API
 // =====================================================
 
 PDF_API int PDF_CALL Pdf_GetPageLinkCount(PDF_DOCUMENT ptr, int pageIndex)

@@ -268,7 +268,6 @@ namespace pdf
     }
 
 
-
     // =========================================================
     // Basic Stream Helpers
     // =========================================================
@@ -337,7 +336,6 @@ namespace pdf
     }
 
 
-
     std::string PdfContentParser::readName()
     {
         std::string out;
@@ -368,7 +366,6 @@ namespace pdf
         {
             if (++limit > MAX_STRING_LEN)
             {
-                LogDebug("ERROR: Content stream string too long at position %zu, truncating", startPos);
                 break;
             }
 
@@ -377,7 +374,6 @@ namespace pdf
             // ✅ EOF kontrolü
             if (c == 0 && eof())
             {
-                LogDebug("ERROR: Unexpected EOF in string at position %zu", startPos);
                 break;
             }
 
@@ -593,7 +589,6 @@ namespace pdf
                     if (peek() != '/')
                     {
                         // Hatalı format, dictionary'i kapat
-                        LogDebug("WARNING: Invalid dictionary key, skipping to end");
                         while (!eof() && !(peek() == '>' && _pos + 1 < _data.size() && _data[_pos + 1] == '>'))
                             get();
                         if (!eof()) { get(); get(); } // >> atla
@@ -611,7 +606,6 @@ namespace pdf
 
                     if (_pos == posBefore)
                     {
-                        LogDebug("WARNING: Failed to read dictionary value, breaking");
                         break;
                     }
 
@@ -673,7 +667,6 @@ namespace pdf
 
             if (_pos > _data.size())
             {
-                LogDebug("ERROR: Position overflow after readString, resetting to EOF");
                 _pos = _data.size();
             }
             return;
@@ -690,7 +683,6 @@ namespace pdf
             {
                 if (++arrayLimit > MAX_ARRAY_ITEMS)
                 {
-                    LogDebug("ERROR: Array has too many items, truncating");
                     break;
                 }
 
@@ -706,7 +698,6 @@ namespace pdf
 
                 if (_pos == posBefore && !_stack.empty())
                 {
-                    LogDebug("ERROR: parseToken did not advance position in array");
                     _stack.pop_back();
                     break;
                 }
@@ -737,7 +728,6 @@ namespace pdf
 
         if (_pos == posBefore && !op.empty())
         {
-            LogDebug("ERROR: readWord did not advance position, op='%s'", op.c_str());
             _pos++;
             return;
         }
@@ -816,8 +806,6 @@ namespace pdf
     }
 
 
-
-
     void PdfContentParser::op_v()
     {
         double y3 = popNumber();
@@ -837,7 +825,6 @@ namespace pdf
         _cpX = x3;
         _cpY = y3;
     }
-
 
 
     void PdfContentParser::op_y()
@@ -941,13 +928,11 @@ namespace pdf
             // =====================================================
             if (!_gs.fillPatternName.empty())
             {
-                LogDebug("Pattern fill detected: '%s'", _gs.fillPatternName.c_str());
 
                 // 1. Try Resolving Tiling Pattern (Type 1)
                 PdfPattern pattern;
                 if (resolvePattern(_gs.fillPatternName, pattern))
                 {
-                    LogDebug("Pattern resolved to Tiling Pattern (Type 1)");
 
                     if (pattern.isUncolored) {
                         pattern.baseColor = rgbToArgbWithAlpha(_gs.fillColor, _gs.fillAlpha);
@@ -969,7 +954,6 @@ namespace pdf
 
                 if (resolvePatternToGradient(_gs.fillPatternName, gradient, patternMatrix))
                 {
-                    LogDebug("Pattern resolved to gradient, rendering...");
 
                     PdfMatrix gradientCTM = PdfMul(patternMatrix, _gs.ctm);
 
@@ -986,7 +970,6 @@ namespace pdf
                 }
                 else
                 {
-                    LogDebug("Pattern could not be resolved, falling back to solid fill");
                 }
             }
 
@@ -1004,7 +987,6 @@ namespace pdf
 
         _currentPath.clear();
     }
-
 
 
     void PdfContentParser::op_S()
@@ -1048,7 +1030,6 @@ namespace pdf
         PdfMatrix& patternMatrix)
     {
         if (!_doc) {
-            LogDebug("resolvePatternToGradient: _doc is NULL!");
             return false;
         }
 
@@ -1060,7 +1041,6 @@ namespace pdf
 
         LogDebug("resolvePatternToGradient: Looking for pattern '%s' (normalized from '%s')",
             name.c_str(), patternName.c_str());
-        LogDebug("resolvePatternToGradient: _resStack size = %zu", _resStack.size());
 
         // Resources'tan Pattern dictionary'yi bul
         std::set<int> visited;
@@ -1070,48 +1050,38 @@ namespace pdf
         {
             auto res = *it;
             if (!res) {
-                LogDebug("  resStack[%d]: NULL", resIndex);
                 continue;
             }
 
-            LogDebug("  resStack[%d]: checking for Pattern dict...", resIndex);
 
             auto patternsRaw = res->get("Pattern");
             if (!patternsRaw) patternsRaw = res->get("/Pattern");
             if (!patternsRaw) {
-                LogDebug("  resStack[%d]: No Pattern dict found", resIndex);
                 continue;
             }
 
-            LogDebug("  resStack[%d]: Found Pattern dict, resolving...", resIndex);
 
             auto patternsObj = _doc->resolve(patternsRaw, visited);
             auto patternsDict = std::dynamic_pointer_cast<PdfDictionary>(patternsObj);
             if (!patternsDict) {
-                LogDebug("  resStack[%d]: Pattern is not a dictionary!", resIndex);
                 continue;
             }
 
-            LogDebug("  resStack[%d]: Pattern dict has %zu entries", resIndex, patternsDict->entries.size());
 
             // Debug: tüm pattern key'lerini listele
             for (const auto& entry : patternsDict->entries) {
-                LogDebug("    Pattern key: '%s'", entry.first.c_str());
             }
 
             auto patternRaw = patternsDict->get(name);
             if (!patternRaw) patternRaw = patternsDict->get("/" + name);
             if (!patternRaw) {
-                LogDebug("  resStack[%d]: Pattern '%s' not found in dict", resIndex, name.c_str());
                 continue;
             }
 
-            LogDebug("  resStack[%d]: Found pattern '%s', resolving...", resIndex, name.c_str());
 
             auto patternObj = _doc->resolve(patternRaw, visited);
             auto patternDict = std::dynamic_pointer_cast<PdfDictionary>(patternObj);
             if (!patternDict) {
-                LogDebug("  Pattern '%s' is not a dictionary!", name.c_str());
                 continue;
             }
 
@@ -1119,16 +1089,13 @@ namespace pdf
             auto ptRaw = patternDict->get("PatternType");
             if (!ptRaw) ptRaw = patternDict->get("/PatternType");
             if (!ptRaw) {
-                LogDebug("  Pattern '%s' has no PatternType!", name.c_str());
                 continue;
             }
 
             auto ptNum = std::dynamic_pointer_cast<PdfNumber>(ptRaw);
             int patternType = ptNum ? (int)ptNum->value : 0;
-            LogDebug("  Pattern '%s' PatternType = %d", name.c_str(), patternType);
 
             if (patternType != 2) {
-                LogDebug("  Pattern '%s' is not PatternType 2 (shading), skipping", name.c_str());
                 continue;
             }
 
@@ -1143,21 +1110,18 @@ namespace pdf
                     patternMatrix.d, patternMatrix.e, patternMatrix.f);
             }
             else {
-                LogDebug("  Pattern has no Matrix, using identity");
             }
 
             // Shading dictionary
             auto shadingRaw = patternDict->get("Shading");
             if (!shadingRaw) shadingRaw = patternDict->get("/Shading");
             if (!shadingRaw) {
-                LogDebug("  Pattern '%s' has no Shading dict!", name.c_str());
                 continue;
             }
 
             auto shadingObj = _doc->resolve(shadingRaw, visited);
             auto shadingDict = std::dynamic_pointer_cast<PdfDictionary>(shadingObj);
             if (!shadingDict) {
-                LogDebug("  Shading is not a dictionary!");
                 continue;
             }
 
@@ -1165,16 +1129,13 @@ namespace pdf
             auto stRaw = shadingDict->get("ShadingType");
             if (!stRaw) stRaw = shadingDict->get("/ShadingType");
             if (!stRaw) {
-                LogDebug("  Shading has no ShadingType!");
                 continue;
             }
 
             auto stNum = std::dynamic_pointer_cast<PdfNumber>(stRaw);
             int shadingType = stNum ? (int)stNum->value : 0;
-            LogDebug("  ShadingType = %d", shadingType);
 
             if (shadingType != 2 && shadingType != 3) {
-                LogDebug("  Shading type %d not supported (only 2 and 3)", shadingType);
                 continue;
             }
 
@@ -1184,14 +1145,12 @@ namespace pdf
             auto coordsRaw = shadingDict->get("Coords");
             if (!coordsRaw) coordsRaw = shadingDict->get("/Coords");
             if (!coordsRaw) {
-                LogDebug("  Shading has no Coords!");
                 continue;
             }
 
             auto coordsObj = _doc->resolve(coordsRaw, visited);
             auto coordsArr = std::dynamic_pointer_cast<PdfArray>(coordsObj);
             if (!coordsArr || coordsArr->items.size() < 4) {
-                LogDebug("  Coords is not a valid array!");
                 continue;
             }
 
@@ -1231,7 +1190,6 @@ namespace pdf
                 auto csObj = _doc->resolve(csRaw, visited);
                 if (auto csName = std::dynamic_pointer_cast<PdfName>(csObj)) {
                     std::string cs = csName->value;
-                    LogDebug("  ColorSpace = '%s'", cs.c_str());
                     if (cs == "/DeviceGray" || cs == "DeviceGray") numComponents = 1;
                     else if (cs == "/DeviceCMYK" || cs == "DeviceCMYK") numComponents = 4;
                 }
@@ -1241,7 +1199,6 @@ namespace pdf
                             _doc->resolve(csArr->items[0], visited));
                         if (first) {
                             std::string csType = first->value;
-                            LogDebug("  ColorSpace array type = '%s'", csType.c_str());
                             if (csType == "/ICCBased" || csType == "ICCBased") {
                                 if (csArr->items.size() >= 2) {
                                     auto iccStream = std::dynamic_pointer_cast<PdfStream>(
@@ -1257,13 +1214,11 @@ namespace pdf
                                 numComponents = 1;
                             }
                             else if (csType == "/DeviceN" || csType == "DeviceN") {
-                                LogDebug("  DeviceN color space in pattern shading");
                                 // Check alternate space
                                 if (csArr->items.size() >= 3) {
                                     auto altCS = _doc->resolve(csArr->items[2], visited);
                                     if (auto altName = std::dynamic_pointer_cast<PdfName>(altCS)) {
                                         std::string alt = altName->value;
-                                        LogDebug("  DeviceN alternate: %s", alt.c_str());
                                         if (alt == "/DeviceCMYK" || alt == "DeviceCMYK")
                                             numComponents = 4;
                                         else if (alt == "/DeviceGray" || alt == "DeviceGray")
@@ -1281,9 +1236,7 @@ namespace pdf
             if (!funcRaw) funcRaw = shadingDict->get("/Function");
             if (funcRaw) {
                 auto funcObj = _doc->resolve(funcRaw, visited);
-                LogDebug("  Parsing Function...");
                 if (!PdfGradient::parseFunctionToGradient(funcObj, _doc, gradient, numComponents)) {
-                    LogDebug("  Function parsing failed, using fallback colors");
                     // Fallback: basit iki renk
                     GradientStop s0, s1;
                     s0.position = 0.0;
@@ -1295,7 +1248,6 @@ namespace pdf
                 }
             }
             else {
-                LogDebug("  No Function, using fallback colors");
                 GradientStop s0, s1;
                 s0.position = 0.0;
                 s0.rgb[0] = 1.0; s0.rgb[1] = 0.9; s0.rgb[2] = 0.0;
@@ -1310,7 +1262,6 @@ namespace pdf
             return true;
         }
 
-        LogDebug("Pattern '%s' not found in any resource stack!", name.c_str());
         return false;
     }
 
@@ -1347,7 +1298,6 @@ namespace pdf
         }
 
         if (!patternObj) {
-            LogDebug("resolvePattern: Pattern '%s' not found", name.c_str());
             return false;
         }
 
@@ -1368,7 +1318,6 @@ namespace pdf
         if (type == 1)
         {
             // Tiling Pattern
-            LogDebug("Resolving Tiling Pattern (Type 1): %s", name.c_str());
 
             auto ptRaw = patternDict->get("/PaintType");
             auto tmRaw = patternDict->get("/TilingType");
@@ -1391,7 +1340,6 @@ namespace pdf
             // Tip dönüşümü: Type 1 Pattern bir Stream olmalıdır.
             auto stream = std::dynamic_pointer_cast<PdfStream>(patternObj);
             if (!stream) {
-                LogDebug("Error: Type 1 Pattern is not a Stream!");
                 return false;
             }
             // Stream dictionary ile pattern properties aynıdır.
@@ -1514,13 +1462,11 @@ namespace pdf
                 return true;
             }
             else {
-                LogDebug("Failed to decode Pattern Stream");
                 return false;
             }
         }
         else if (type == 2)
         {
-            LogDebug("ResolvePattern: Type 2 not handled here.");
             return false;
         }
 
@@ -1578,7 +1524,6 @@ namespace pdf
     {
         // Pop D2D clip layers pushed at this q/Q level
         if (_clipLayerCount > 0 && _painter) {
-            LogDebug("Q: Popping %d clip layers", _clipLayerCount);
             for (int i = 0; i < _clipLayerCount; i++) {
                 _painter->popClipPath();
             }
@@ -2040,7 +1985,6 @@ namespace pdf
     }
 
 
-
     void PdfContentParser::op_TJ()
     {
         auto arr = std::dynamic_pointer_cast<PdfArray>(_stack.back());
@@ -2166,7 +2110,6 @@ namespace pdf
     }
 
 
-
     void PdfContentParser::op_c()
     {
         double y3 = popNumber();
@@ -2234,7 +2177,6 @@ namespace pdf
             // =====================================================
             if (!_gs.fillPatternName.empty())
             {
-                LogDebug("Pattern fill (even-odd) detected: '%s'", _gs.fillPatternName.c_str());
 
                 // 1. Try Resolving Tiling Pattern (Type 1)
                 PdfPattern pattern;
@@ -2429,7 +2371,6 @@ namespace pdf
     }
 
 
-
     void PdfContentParser::op_w()
     {
         _gs.lineWidth = popNumber(1.0);
@@ -2461,50 +2402,41 @@ namespace pdf
 
         if (op == "BX")
         {
-            LogDebug("BEGIN compatibility section (ignoring)");
             return; // BX başlangıcını görmezden gel
         }
 
         if (op == "EX")
         {
-            LogDebug("END compatibility section (ignoring)");
             return; // EX bitişini görmezden gel
         }
 
 
         if (op == "m")
         {
-            LogDebug("PATH MoveTo");
             return op_m();
         }
         if (op == "l")
         {
-            LogDebug("PATH LineTo");
             return op_l();
         }
         if (op == "c")
         {
-            LogDebug("PATH CurveTo (cubic bezier)");
             return op_c();
         }
         if (op == "v")
         {
-            LogDebug("PATH CurveTo-v (cubic variant)");
             return op_v();
         }
         if (op == "y")
         {
-            LogDebug("PATH CurveTo-y (cubic variant)");
             return op_y();
         }
         if (op == "h")
         {
-            LogDebug("PATH ClosePath");
             return op_h();
         }
         if (op == "re")
         {
-            LogDebug("PATH Rectangle");
             return op_re();
         }
 
@@ -2516,7 +2448,6 @@ namespace pdf
         }
         if (op == "f*")
         {
-            LogDebug("FILL EvenOdd: %zu segments", _currentPath.size());
             return op_f_evenodd();
         }
         if (op == "S")
@@ -2529,43 +2460,36 @@ namespace pdf
         if (op == "s")
         {
             // s = close path + stroke (equivalent to h S)
-            LogDebug("CLOSE+STROKE: %zu segments", _currentPath.size());
             op_h();
             return op_S();
         }
         if (op == "B")
         {
-            LogDebug("FILL+STROKE: %zu segments", _currentPath.size());
             return op_fill_stroke();
         }
         if (op == "B*")
         {
-            LogDebug("FILL+STROKE EvenOdd: %zu segments", _currentPath.size());
             return op_fill_stroke_evenodd();
         }
         if (op == "b")
         {
             // b = close path + fill + stroke (equivalent to h B)
-            LogDebug("CLOSE+FILL+STROKE: %zu segments", _currentPath.size());
             op_h();
             return op_fill_stroke();
         }
         if (op == "b*")
         {
             // b* = close path + fill (even-odd) + stroke (equivalent to h B*)
-            LogDebug("CLOSE+FILL+STROKE EvenOdd: %zu segments", _currentPath.size());
             op_h();
             return op_fill_stroke_evenodd();
         }
         if (op == "F")
         {
             // F is equivalent to f (obsolete operator kept for compatibility)
-            LogDebug("FILL (F): %zu segments", _currentPath.size());
             return op_f();
         }
         if (op == "W")
         {
-            LogDebug("CLIP W: %zu segments (winding)", _currentPath.size());
             // PDF spec: W intersects current path with existing clip (cumulative)
             _clippingPath = _currentPath;
             _clippingPathCTM = _gs.ctm;
@@ -2575,7 +2499,6 @@ namespace pdf
             if (_painter && !_currentPath.empty()) {
                 _painter->pushClipPath(_currentPath, _gs.ctm, false);
                 _clipLayerCount++;
-                LogDebug("  -> Pushed clip layer #%d", _clipLayerCount);
             }
             return;
         }
@@ -2597,7 +2520,6 @@ namespace pdf
 
         if (op == "n")
         {
-            LogDebug("PATH n (no-paint, clipping=%d, path=%zu segs)", _hasClippingPath ? 1 : 0, _currentPath.size());
             // End path without painting (used for clipping)
             _currentPath.clear();
             return;
@@ -2605,7 +2527,6 @@ namespace pdf
 
         if (op == "W*")
         {
-            LogDebug("CLIP W*: %zu segments (even-odd)", _currentPath.size());
             // PDF spec: W* intersects current path with existing clip using even-odd rule
             _clippingPath = _currentPath;
             _clippingPathCTM = _gs.ctm;
@@ -2615,7 +2536,6 @@ namespace pdf
             if (_painter && !_currentPath.empty()) {
                 _painter->pushClipPath(_currentPath, _gs.ctm, true);
                 _clipLayerCount++;
-                LogDebug("  -> Pushed clip layer #%d (even-odd)", _clipLayerCount);
             }
             return;
         }
@@ -2626,7 +2546,6 @@ namespace pdf
         if (op == "sh")
         {
             std::string shadingName = popName();
-            LogDebug("========== SHADING OPERATOR: '%s' ==========", shadingName.c_str());
 
             // ========== DEBUG: sh operatörü path durumu ==========
             static FILE* shDebug = nullptr;
@@ -2779,7 +2698,6 @@ namespace pdf
                             // DeviceN: [/DeviceN names alternateSpace tintTransform]
                             else if (csType == "/DeviceN" || csType == "DeviceN")
                             {
-                                LogDebug("  DeviceN color space detected");
                                 isDeviceN = true;
 
                                 // Get names array (2nd element, index 1)
@@ -2795,7 +2713,6 @@ namespace pdf
                                                 resolveObj(item)))
                                             {
                                                 deviceNNames.push_back(nameObj->value);
-                                                LogDebug("    DeviceN name: %s", nameObj->value.c_str());
                                             }
                                         }
                                         numComponents = (int)deviceNNames.size();
@@ -2859,7 +2776,6 @@ namespace pdf
             if (isDeviceN && !deviceNNames.empty())
             {
                 // Use DeviceN-specific parsing
-                LogDebug("Using DeviceN gradient parsing for %zu components", deviceNNames.size());
                 parseSuccess = PdfGradient::parseFunctionToGradientDeviceN(funcObj, _doc, gradient, deviceNNames);
             }
             else
@@ -2913,7 +2829,6 @@ namespace pdf
         if (op == "gs")
         {
             std::string gsName = popName();
-            LogDebug("EXTGSTATE: '%s'", gsName.c_str());
 
             // Find ExtGState in resources
             for (auto it = _resStack.rbegin(); it != _resStack.rend(); ++it)
@@ -2932,21 +2847,18 @@ namespace pdf
                 if (auto caStroke = std::dynamic_pointer_cast<PdfNumber>(resolveObj(gsObj->get("/CA"))))
                 {
                     _gs.strokeAlpha = std::clamp(caStroke->value, 0.0, 1.0);
-                    LogDebug("  Stroke alpha (CA): %.2f", _gs.strokeAlpha);
                 }
 
                 // ca - fill alpha
                 if (auto caFill = std::dynamic_pointer_cast<PdfNumber>(resolveObj(gsObj->get("/ca"))))
                 {
                     _gs.fillAlpha = std::clamp(caFill->value, 0.0, 1.0);
-                    LogDebug("  Fill alpha (ca): %.2f", _gs.fillAlpha);
                 }
 
                 // BM - blend mode (log only for now)
                 if (auto bmName = std::dynamic_pointer_cast<PdfName>(resolveObj(gsObj->get("/BM"))))
                 {
                     std::string bm = bmName->value;
-                    LogDebug("  Blend mode (BM): %s", bm.c_str());
                     // Store for future use
                     _gs.blendMode = bm;
                 }
@@ -2955,7 +2867,6 @@ namespace pdf
                 if (auto lwNum = std::dynamic_pointer_cast<PdfNumber>(resolveObj(gsObj->get("/LW"))))
                 {
                     _gs.lineWidth = lwNum->value;
-                    LogDebug("  Line width (LW): %.2f", _gs.lineWidth);
                 }
 
                 // LC - line cap
@@ -3043,7 +2954,6 @@ namespace pdf
             std::string csName = popName();
             bool isFill = (op == "cs");
 
-            LogDebug("ColorSpace %s: '%s'", isFill ? "fill" : "stroke", csName.c_str());
 
             if (isFill) {
                 _gs.fillColorSpace = csName;
@@ -3066,7 +2976,6 @@ namespace pdf
                     std::string patternName = nameObj->value;
                     _stack.pop_back();
 
-                    LogDebug("Pattern %s: '%s'", isFill ? "fill" : "stroke", patternName.c_str());
 
                     if (isFill) {
                         _gs.fillPatternName = patternName;
@@ -3108,7 +3017,6 @@ namespace pdf
 
                 // DEBUG: Log gold color detection
                 if (r > 0.7 && g > 0.5 && b < 0.2) {
-                    LogDebug("*** GOLD COLOR DETECTED: R=%.3f G=%.3f B=%.3f (stroke=%d) ***", r, g, b, isStroke ? 1 : 0);
                 }
 
                 if (isFill) {
@@ -3118,7 +3026,6 @@ namespace pdf
                 else {
                     _gs.strokeColor[0] = r; _gs.strokeColor[1] = g; _gs.strokeColor[2] = b;
                     _gs.strokePatternName.clear();
-                    LogDebug("Stroke color set: R=%.3f G=%.3f B=%.3f", r, g, b);
                 }
             }
             else if (numArgs == 4) // CMYK
@@ -3208,7 +3115,6 @@ namespace pdf
         {
             if (_stack.empty())
             {
-                LogDebug("ERROR: 'Do' with empty stack!");
                 return;
             }
 
@@ -3217,11 +3123,9 @@ namespace pdf
 
             if (!nameObj)
             {
-                LogDebug("ERROR: 'Do' with non-name object!");
                 return;
             }
 
-            LogDebug("XObject Do: '%s'", nameObj->value.c_str());
             renderXObjectDo(nameObj->value);
             return;
         }
@@ -3230,17 +3134,14 @@ namespace pdf
         static std::map<std::string, int> unsupported;
         if (unsupported[op]++ < 2)
         {
-            LogDebug("UNSUPPORTED: '%s'", op.c_str());
         }
     }
 
     void PdfContentParser::renderXObjectDo(const std::string& xNameRaw)
     {
-        LogDebug("renderXObjectDo START: '%s'", xNameRaw.c_str());
 
         if (!_doc || !_painter)
         {
-            LogDebug("ERROR: _doc or _painter is null!");
             return;
         }
 
@@ -3249,32 +3150,26 @@ namespace pdf
 
         if (recursionDepth >= MAX_RECURSION)
         {
-            LogDebug("ERROR: Max recursion depth reached!");
             return;
         }
 
-        LogDebug("Recursion depth: %d", recursionDepth);
         recursionDepth++;
 
         std::string xName = xNameRaw;
         if (!xName.empty() && xName[0] == '/')
             xName.erase(0, 1);
 
-        LogDebug("Normalized XObject name: '%s'", xName.c_str());
 
         std::shared_ptr<PdfStream> xoStream;
 
-        LogDebug("XObject lookup: _resStack.size=%zu", _resStack.size());
         int resIdx = 0;
         for (auto it = _resStack.rbegin(); it != _resStack.rend(); ++it, ++resIdx)
         {
             auto res = *it;
             if (!res) {
-                LogDebug("  resStack[%d]: NULL", resIdx);
                 continue;
             }
 
-            LogDebug("  resStack[%d]: %zu entries", resIdx, res->entries.size());
 
             // Try both /XObject and XObject key formats
             auto xoObj = res->get("/XObject");
@@ -3286,17 +3181,14 @@ namespace pdf
                 for (auto& kv : res->entries) {
                     keys += kv.first + " ";
                 }
-                LogDebug("  resStack[%d]: No /XObject found. Keys: %s", resIdx, keys.c_str());
                 continue;
             }
 
             auto xoDict = resolveDict(xoObj);
             if (!xoDict) {
-                LogDebug("  resStack[%d]: /XObject exists but is not a dictionary", resIdx);
                 continue;
             }
 
-            LogDebug("  resStack[%d]: XObject dict has %zu entries", resIdx, xoDict->entries.size());
 
             auto itX = xoDict->entries.find("/" + xName);
             if (itX == xoDict->entries.end()) {
@@ -3309,24 +3201,20 @@ namespace pdf
                 for (auto& kv : xoDict->entries) {
                     xkeys += kv.first + " ";
                 }
-                LogDebug("  resStack[%d]: XObject '%s' not found. Available: %s", resIdx, xName.c_str(), xkeys.c_str());
                 continue;
             }
 
             xoStream = std::dynamic_pointer_cast<PdfStream>(resolveObj(itX->second));
             if (xoStream)
             {
-                LogDebug("Found XObject stream for '%s'", xName.c_str());
                 break;
             }
             else {
-                LogDebug("  resStack[%d]: XObject '%s' found but not a stream (resolve failed?)", resIdx, xName.c_str());
             }
         }
 
         if (!xoStream || !xoStream->dict)
         {
-            LogDebug("ERROR: XObject stream not found or has no dict for '%s'", xName.c_str());
             recursionDepth--;
             return;
         }
@@ -3336,51 +3224,20 @@ namespace pdf
 
         if (!subtype)
         {
-            LogDebug("ERROR: XObject has no /Subtype for '%s'", xName.c_str());
             recursionDepth--;
             return;
         }
 
-        LogDebug("XObject subtype: '%s'", subtype->value.c_str());
 
         // IMAGE XOBJECT
         if (subtype->value == "/Image" || subtype->value == "Image")
         {
-            LogDebug("Processing Image XObject");
-
-            // ================= IMAGE DEBUG =================
-            auto dict = xoStream->dict;
-
-            auto logName = [&](const char* key)
-                {
-                    auto o = resolveObj(dict->get(key));
-                    if (auto n = std::dynamic_pointer_cast<PdfName>(o))
-                        LogDebug("  %s = %s", key, n->value.c_str());
-                    else if (auto num = std::dynamic_pointer_cast<PdfNumber>(o))
-                        LogDebug("  %s = %.2f", key, num->value);
-                    else if (o)
-                        LogDebug("  %s = (object type)", key);
-                    else
-                        LogDebug("  %s = <null>", key);
-                };
-
-            LogDebug("IMAGE DICTIONARY:");
-            logName("/Width");
-            logName("/Height");
-            logName("/BitsPerComponent");
-            logName("/ColorSpace");
-            logName("/Filter");
-            logName("/Decode");
-            logName("/Mask");
-            logName("/SMask");
-
 
 
             std::vector<uint8_t> argb;
             int iw = 0, ih = 0;
             if (_doc->decodeImageXObject(xoStream, argb, iw, ih))
             {
-                LogDebug("Decoded image: %dx%d", iw, ih);
 
                 // ========== DEBUG: İlk birkaç image'ı BMP olarak kaydet ==========
                 static int savedImageCount = 0;
@@ -3423,7 +3280,6 @@ namespace pdf
                             fwrite(row.data(), 1, rowSize, bmpFile);
                         }
                         fclose(bmpFile);
-                        LogDebug("Saved debug image to: %s (%dx%d)", bmpPath, iw, ih);
                     }
                     savedImageCount++;
                 }
@@ -3431,7 +3287,6 @@ namespace pdf
 
                 if (iw == 1 && ih == 1)
                 {
-                    LogDebug("Skipping 1x1 image");
                     recursionDepth--;
                     return;
                 }
@@ -3550,24 +3405,19 @@ namespace pdf
                             if (sy < minY) minY = sy;
                             if (sy > maxY) maxY = sy;
                         }
-                        LogDebug("Drawing image with rect clip (%zu segs)", _clippingPath.size());
                         _painter->drawImageWithClipRect(argb, iw, ih, image_ctm,
                             (int)minX, (int)minY, (int)maxX, (int)maxY);
                     } else {
                         // Complex clip path - use drawImageClipped
-                        LogDebug("Drawing image with complex clip (%zu segs)", _clippingPath.size());
                         _painter->drawImageClipped(argb, iw, ih, image_ctm,
                             _clippingPath, _clippingPathCTM);
                     }
                 } else {
-                    LogDebug("Drawing image (no clip)");
                     _painter->drawImage(argb, iw, ih, image_ctm);
                 }
-                LogDebug("Image drawn");
             }
             else
             {
-                LogDebug("ERROR: Failed to decode image");
             }
             recursionDepth--;
             return;
@@ -3576,17 +3426,14 @@ namespace pdf
         // FORM XOBJECT
         if (subtype->value == "/Form" || subtype->value == "Form")
         {
-            LogDebug("Processing Form XObject");
 
             std::vector<uint8_t> decoded;
             if (!_doc->decodeStream(xoStream, decoded))
             {
-                LogDebug("ERROR: Failed to decode Form stream");
                 recursionDepth--;
                 return;
             }
 
-            LogDebug("Decoded Form stream: %zu bytes", decoded.size());
 
             // Form Matrix
             PdfMatrix formM;
@@ -3600,7 +3447,6 @@ namespace pdf
             else
             {
                 formM = PdfMatrix(); // identity
-                LogDebug("Form has no Matrix (using identity)");
             }
 
             // Resources
@@ -3609,7 +3455,6 @@ namespace pdf
             auto formRes = resolveDict(rObj);
             if (formRes)
             {
-                LogDebug("Form has Resources");
                 childResStack.push_back(formRes);
                 childResStack.push_back(formRes);
 
@@ -3619,14 +3464,12 @@ namespace pdf
             }
             else
             {
-                LogDebug("Form has no Resources");
             }
             PdfGraphicsState childGs = _gs;
             // ✅ FIX: MuPDF ile aynı sıra - formM × ctm (formM solda!)
             // MuPDF: gstate->ctm = fz_concat(transform, gstate->ctm);
             childGs.ctm = PdfMul(formM, _gs.ctm);
 
-            LogDebug("Parsing child Form content...");
 
             PdfContentParser child(
                 decoded,
@@ -3644,15 +3487,12 @@ namespace pdf
             }
             child.parse();
 
-            LogDebug("Child Form parsing complete");
             recursionDepth--;
             return;
         }
 
-        LogDebug("ERROR: Unknown XObject subtype: '%s'", subtype->value.c_str());
         recursionDepth--;
     }
-
 
 
     std::shared_ptr<PdfObject> PdfContentParser::resolveObj(const std::shared_ptr<PdfObject>& o) const
@@ -3690,7 +3530,6 @@ namespace pdf
     }
 
 
-
     void PdfContentParser::op_CS() { _currentStrokeCS = popName(); _stack.clear(); }
     void PdfContentParser::op_cs() { _currentFillCS = popName(); _stack.clear(); }
 
@@ -3706,7 +3545,6 @@ namespace pdf
         // Look up in resources
         auto res = currentResources();
         if (!res) {
-            LogDebug("resolveColorSpaceType(%s): no resources", csName.c_str());
             return 0;
         }
 
@@ -3717,7 +3555,6 @@ namespace pdf
         auto colorSpaces = csDict->get("/ColorSpace");
         if (!colorSpaces) colorSpaces = csDict->get("ColorSpace");
         if (!colorSpaces) {
-            LogDebug("resolveColorSpaceType(%s): no ColorSpace in resources", csName.c_str());
             return 0;
         }
         auto csResolved = resolveObj(colorSpaces);
@@ -3738,7 +3575,6 @@ namespace pdf
             csEntry = csDictObj->get(noSlash);
         }
         if (!csEntry) {
-            LogDebug("resolveColorSpaceType(%s): not found in ColorSpace dict", csName.c_str());
             return 0;
         }
         auto csArray = resolveObj(csEntry);
@@ -3769,7 +3605,6 @@ namespace pdf
                     std::string altName = static_cast<PdfName*>(altCS.get())->value;
                     // Strip '/' prefix for comparison
                     if (!altName.empty() && altName[0] == '/') altName = altName.substr(1);
-                    LogDebug("  alternate CS: '%s'", altName.c_str());
                     if (altName == "DeviceCMYK") return 4; // Separation/DeviceN -> CMYK
                     if (altName == "DeviceGray") return 5; // Separation/DeviceN -> Gray
                 }
@@ -3823,7 +3658,6 @@ namespace pdf
                 double t = popNumber();
                 // tint t -> CMYK(0,0,0,t) -> RGB(1-t, 1-t, 1-t)
                 cmykToRgb(0, 0, 0, t, out);
-                LogDebug("DeviceN/Separation tint %.3f -> RGB(%.3f,%.3f,%.3f)", t, out[0], out[1], out[2]);
             }
         }
         else if (csType == 5) {
@@ -3832,7 +3666,6 @@ namespace pdf
                 double t = popNumber();
                 double gray = 1.0 - t; // Separation/All to Gray: tint 1=black, 0=white
                 out[0] = gray; out[1] = gray; out[2] = gray;
-                LogDebug("Separation->Gray tint %.3f -> gray %.3f", t, gray);
             }
         }
         else if (csType == 3) {
@@ -3887,7 +3720,6 @@ namespace pdf
             // Pattern
             std::string name = popName(); // Last arg is pattern name
             _gs.fillPatternName = name;
-            LogDebug("Pattern Selected via sc: %s", name.c_str());
 
             // Uncolored Pattern Color Extraction
             if (!_stack.empty()) {
@@ -3921,7 +3753,6 @@ namespace pdf
     void PdfContentParser::op_sh()
     {
         std::string name = popName();
-        LogDebug("SHADING OP (sh): %s", name.c_str());
         // TODO: Implement direct shading.
         // For now, at least we log it.
         // If the right border is drawn with 'sh', we need to implement this!

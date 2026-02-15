@@ -1,4 +1,4 @@
-﻿// dllmain.cpp : DLL uygulamasının giriş noktasını tanımlar.
+﻿// dllmain.cpp : Defines the DLL entry point.
 #include "pch.h"
 
 BOOL APIENTRY DllMain( HMODULE hModule,
@@ -16,4 +16,3 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     }
     return TRUE;
 }
-

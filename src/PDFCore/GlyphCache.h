@@ -10,7 +10,7 @@ namespace pdf
 {
     // ============================================
     // GLYPH CACHE v2 - Uses font hash instead of pointer
-    // 
+    //
     // Problem: Old cache used FT_Face pointer as key
     //          When fonts are reloaded, pointers change = cache miss
     // Solution: Use font program hash + glyph ID + pixel size

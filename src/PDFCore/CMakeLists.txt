@@ -20,7 +20,6 @@ set(PDFCORE_SOURCES
     PdfGradient.cpp
     PdfDebug.cpp
     GlyphCache.cpp
-    PdfBitmapCanvas.cpp
 )
 
 set(ZLIB_SOURCES

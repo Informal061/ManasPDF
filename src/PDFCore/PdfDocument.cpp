@@ -179,7 +179,6 @@ namespace pdf
     }
 
 
-
     // Extract all <hex> values from a token that may contain multiple concatenated hex groups
     // e.g. "<0003><000A><0028>" -> {0x0003, 0x000A, 0x0028}
     // e.g. "<0003>" -> {0x0003}
@@ -231,7 +230,6 @@ namespace pdf
     {
         std::string s(data.begin(), data.end());
 
-        LogDebug("[ToUnicode] parseToUnicodeCMap called, data.size=%zu", data.size());
 
         std::istringstream iss(s);
         std::string tok;
@@ -244,13 +242,11 @@ namespace pdf
         {
             if (tok == "beginbfchar") {
                 inBfChar = true;
-                LogDebug("[ToUnicode] >>> beginbfchar");
                 continue;
             }
             if (tok == "endbfchar") { inBfChar = false; continue; }
             if (tok == "beginbfrange") {
                 inBfRange = true;
-                LogDebug("[ToUnicode] >>> beginbfrange");
                 continue;
             }
             if (tok == "endbfrange") { inBfRange = false; continue; }
@@ -774,16 +770,13 @@ namespace pdf
                 {
                     std::vector<uint8_t> tuDecoded;
                     if (decodeStream(tu, tuDecoded)) {
-                        LogDebug("[Font] ToUnicode decoded, size=%zu bytes", tuDecoded.size());
                         parseToUnicodeCMap(tuDecoded, info);
                     }
                     else {
-                        LogDebug("[Font] ToUnicode decode FAILED, using raw data");
                         parseToUnicodeCMap(tu->data, info); // fallback
                     }
                 }
                 else {
-                    LogDebug("[Font] NO ToUnicode for %s", info.baseFont.c_str());
                 }
             }
 
@@ -1378,7 +1371,6 @@ namespace pdf
         auto fontDict = std::dynamic_pointer_cast<PdfDictionary>(fontObj);
         if (!fontDict) return false;
 
-        LogDebug("loadFontsFromResourceDict: Found %zu fonts", fontDict->entries.size());
 
         // DEBUG: Dosyaya yaz
         {
@@ -1403,7 +1395,6 @@ namespace pdf
 
             if (fonts.find(rn) != fonts.end())
             {
-                LogDebug("  Font '%s' already loaded, skipping", rn.c_str());
                 continue;
             }
 
@@ -1429,31 +1420,26 @@ namespace pdf
             // Encoding
             {
                 auto encObj = dictGetAny(fdict, "/Encoding", "Encoding");
-                LogDebug("  Font '%s': encObj=%p", rn.c_str(), (void*)encObj.get());
 
                 if (encObj)
                 {
                     if (auto e = std::dynamic_pointer_cast<PdfName>(encObj))
                     {
                         info.encoding = e->value;
-                        LogDebug("    Encoding (Name): '%s'", info.encoding.c_str());
                     }
                     else
                     {
                         // Encoding bir IndirectRef veya Dictionary olabilir
                         std::set<int> venc;
                         auto encDictObj = resolveIndirect(encObj, venc);
-                        LogDebug("    Encoding encDictObj=%p (type after resolve)", (void*)encDictObj.get());
 
                         auto encDict = std::dynamic_pointer_cast<PdfDictionary>(encDictObj);
                         if (encDict)
                         {
-                            LogDebug("    Encoding is Dictionary with %zu entries", encDict->entries.size());
 
                             if (auto be = std::dynamic_pointer_cast<PdfName>(dictGetAny(encDict, "/BaseEncoding", "BaseEncoding")))
                             {
                                 info.encoding = be->value;
-                                LogDebug("    BaseEncoding: '%s'", info.encoding.c_str());
                             }
 
                             // ✅ /Differences array'ini parse et
@@ -1462,7 +1448,6 @@ namespace pdf
 
                             if (diffArr && !diffArr->items.empty())
                             {
-                                LogDebug("    Differences array: %zu items", diffArr->items.size());
                                 int currentCode = 0;
                                 int glyphCount = 0;
 
@@ -1490,22 +1475,18 @@ namespace pdf
                                         currentCode++;
                                     }
                                 }
-                                LogDebug("    Parsed %d glyph names from Differences", glyphCount);
                             }
                             else
                             {
-                                LogDebug("    No Differences array found");
                             }
                         }
                         else
                         {
-                            LogDebug("    Encoding is not a Dictionary after resolve");
                         }
                     }
                 }
                 else
                 {
-                    LogDebug("    No Encoding found");
                 }
             }
 
@@ -1795,7 +1776,6 @@ namespace pdf
                         }
 
                         info.hasCodeToGid = true;
-                        LogDebug("    Built codeToGid table for font '%s'", rn.c_str());
 
                         // ═══════════════════════════════════════════════════════════
                         // Width tablosunu oluştur (eğer /Widths yoksa)
@@ -1824,7 +1804,6 @@ namespace pdf
                             }
 
                             info.hasWidths = true;
-                            LogDebug("    Extracted widths from FreeType for font '%s'", rn.c_str());
                         }
 
                         FT_Done_Face(tempFace);
@@ -1987,14 +1966,11 @@ namespace pdf
                 else
                 {
                     // Sistem fontu - baseFont'tan font dosyasini bul
-                    LogDebug("    -> Using system font, baseFont='%s'", info.baseFont.c_str());
 
                     // Font adini Windows font dosyasina esle
                     std::string pathA = resolveSystemFontPath(info.baseFont);
 
-                    LogDebug("    -> Loading system font from: %s", pathA.c_str());
                     FT_Error err = FT_New_Face(g_ftLib, pathA.c_str(), 0, &widthFace);
-                    LogDebug("    -> FT_New_Face result: err=%d, widthFace=%p", (int)err, (void*)widthFace);
                     if (err != 0) widthFace = nullptr;
                     needCleanup = true;
                 }
@@ -2122,7 +2098,6 @@ namespace pdf
                     fflush(fontDbg);
                 }
             }
-            LogDebug("    Font '%s' added to map", rn.c_str());
         }
 
         return true;
@@ -2148,9 +2123,7 @@ namespace pdf
         LogDebug("decodeStream: dict has %zu entries, data=%zu bytes",
             stream->dict->entries.size(), stream->data.size());
         for (const auto& kv : stream->dict->entries) {
-            LogDebug("  dict key='%s' type=%d", kv.first.c_str(), kv.second ? (int)kv.second->type() : -1);
         }
-        LogDebug("decodeStream: fObj=%s", fObj ? "FOUND" : "NULL");
 
         // Indirect reference'ları resolve et
         fObj = resolveIndirect(fObj, visited);
@@ -2163,7 +2136,6 @@ namespace pdf
         // Filtre yok → raw
         if (!fObj)
         {
-            LogDebug("decodeStream: NO FILTER - returning raw data");
             outDecoded = stream->data;
             return true;
         }
@@ -2218,7 +2190,6 @@ namespace pdf
             auto nm = std::dynamic_pointer_cast<PdfName>(fObj);
             std::string filterName = nm ? nm->value : "";
             filters.push_back(filterName);
-            LogDebug("decodeStream: Single filter = '%s'", filterName.c_str());
 
             // ÖNEMLİ DÜZELTME: DecodeParms'ı oku!
             params.push_back(parseDecodeParms(pObj));
@@ -2233,14 +2204,12 @@ namespace pdf
 
             if (arr)
             {
-                LogDebug("decodeStream: Array of %zu filters", arr->items.size());
                 for (size_t i = 0; i < arr->items.size(); i++)
                 {
                     visited.clear();
                     auto n = std::dynamic_pointer_cast<PdfName>(resolveIndirect(arr->items[i], visited));
                     if (n) {
                         filters.push_back(n->value);
-                        LogDebug("decodeStream:   filter[%zu] = '%s'", i, n->value.c_str());
                     }
                     else
                         filters.push_back("");
@@ -2265,7 +2234,6 @@ namespace pdf
         else
         {
             // beklenmeyen tip → raw
-            LogDebug("decodeStream: Unexpected filter type %d - returning raw", (int)fObj->type());
             outDecoded = stream->data;
             return true;
         }
@@ -2278,7 +2246,6 @@ namespace pdf
         if (!decodeResult && !stream->data.empty() &&
             filters.size() == 1 && filters[0] == "/FlateDecode")
         {
-            LogDebug("decodeStream: PdfFilters failed, trying direct decompressFlate...");
             // Log first 16 bytes
             {
                 std::string hex;
@@ -2286,20 +2253,17 @@ namespace pdf
                     char buf[4]; snprintf(buf, sizeof(buf), "%02x ", stream->data[i]);
                     hex += buf;
                 }
-                LogDebug("decodeStream: first 16 bytes: %s", hex.c_str());
             }
 
             // Try direct zlib decompression with inflateInit2
             std::vector<uint8_t> directOutput;
             if (decompressFlate(stream->data, directOutput) && !directOutput.empty())
             {
-                LogDebug("decodeStream: Direct decompressFlate SUCCEEDED! %zu bytes", directOutput.size());
                 outDecoded = std::move(directOutput);
                 return true;
             }
             else
             {
-                LogDebug("decodeStream: Direct decompressFlate also FAILED");
 
                 // Try inflateInit2 with MAX_WBITS+32 (auto detect zlib/gzip/raw)
                 z_stream strm{};
@@ -2307,7 +2271,6 @@ namespace pdf
                 strm.avail_in = (uInt)stream->data.size();
 
                 int initRet = inflateInit2(&strm, 15 + 32);
-                LogDebug("decodeStream: inflateInit2(15+32) returned %d", initRet);
 
                 if (initRet == Z_OK)
                 {
@@ -2335,7 +2298,6 @@ namespace pdf
                     inflateEnd(&strm);
                     if (ret == Z_STREAM_END && !outDecoded.empty())
                     {
-                        LogDebug("decodeStream: Manual inflate SUCCEEDED! %zu bytes", outDecoded.size());
                         return true;
                     }
                 }
@@ -3025,7 +2987,6 @@ namespace pdf
                     if (d0 > d1)
                     {
                         invertAlpha = true;
-                        LogDebug("SMask has inverted Decode [%.1f %.1f] - will invert alpha", d0, d1);
                     }
                 }
             }
@@ -3097,7 +3058,6 @@ namespace pdf
     }
 
 
-
     bool PdfDocument::loadFromBytes(const std::vector<uint8_t>& data)
     {
         _data = data;
@@ -3113,11 +3073,9 @@ namespace pdf
         // 1. Load XRef table first (for correct object positions with incremental updates)
         if (loadXRefTable())
         {
-            LogDebug("PDF: XRef table loaded with %zu entries", _xrefTable.size());
         }
         else
         {
-            LogDebug("PDF: XRef table not found or invalid, using linear scan only");
         }
 
         // 2. Linear scan parser (fallback for objects not in XRef)
@@ -3128,16 +3086,13 @@ namespace pdf
         _objects = parser.objects();
 
         // 2.5. Check for encryption and initialize decryption if needed
-        LogDebug("PDF: Checking encryption, _trailer=%s", _trailer ? "YES" : "NULL");
         if (_trailer)
         {
             auto encryptRef = _trailer->get("/Encrypt");
             if (!encryptRef) encryptRef = _trailer->get("Encrypt");
-            LogDebug("PDF: /Encrypt ref = %s", encryptRef ? "FOUND" : "NOT FOUND");
             if (encryptRef)
             {
                 _isEncrypted = true;
-                LogDebug("PDF: Document is ENCRYPTED - initializing decryption");
                 if (initEncryption())
                 {
                     // Certificate encryption: initCertEncryption sets _encryptionReady=false
@@ -3145,7 +3100,6 @@ namespace pdf
                     // Do NOT override _encryptionReady here for cert encryption.
                     if (_isCertEncrypted)
                     {
-                        LogDebug("PDF: Certificate encryption detected - waiting for certificate/seed");
                         // Don't decrypt streams yet - need seed from C# RSA decrypt
                     }
                     else
@@ -3158,7 +3112,6 @@ namespace pdf
                             char buf[4]; snprintf(buf, sizeof(buf), "%02x", b);
                             keyHex += buf;
                         }
-                        LogDebug("PDF: Encryption key computed: %s (%d bytes)", keyHex.c_str(), (int)_encryptKey.size());
 
                         // Decrypt all stream objects
                         int decryptCount = 0;
@@ -3179,12 +3132,10 @@ namespace pdf
                                 }
                             }
                         }
-                        LogDebug("PDF: Decrypted %d streams total", decryptCount);
                     } // end else (password encryption)
                 }
                 else
                 {
-                    LogDebug("PDF: Encryption init incomplete - password may be required (V=%d, R=%d)", _encryptV, _encryptR);
                 }
             }
         }
@@ -3192,7 +3143,6 @@ namespace pdf
         // 3. XRef tablosundan eksik objeleri yükle (Linearized PDF desteği için kritik)
         if (!_xrefTable.empty())
         {
-            LogDebug("PDF: Loading objects from XRef table...");
             int loadedFromXref = 0;
             for (const auto& kv : _xrefTable)
             {
@@ -3217,13 +3167,11 @@ namespace pdf
                     loadedFromXref++;
                 }
             }
-            LogDebug("PDF: Loaded %d additional objects from XRef", loadedFromXref);
         }
 
         // 4. Object Stream (ObjStm) içindeki objeleri yükle (type 2 xref girdileri)
         if (!_objStmEntries.empty())
         {
-            LogDebug("PDF: Loading %zu objects from Object Streams...", _objStmEntries.size());
             int loadedFromObjStm = 0;
             for (const auto& kv : _objStmEntries)
             {
@@ -3238,7 +3186,6 @@ namespace pdf
                     loadedFromObjStm++;
                 }
             }
-            LogDebug("PDF: Loaded %d objects from Object Streams", loadedFromObjStm);
         }
 
         if (_objects.empty() && _xrefTable.empty())
@@ -3606,7 +3553,6 @@ namespace pdf
         size_t startxrefPos = rfind_string(_data, "startxref");
         if (startxrefPos == std::string::npos)
         {
-            LogDebug("XRef: startxref not found");
             return false;
         }
 
@@ -3616,11 +3562,9 @@ namespace pdf
         pos = readIntegerXRef(_data, pos, xrefOffset);
         if (pos == std::string::npos || xrefOffset < 0)
         {
-            LogDebug("XRef: Invalid startxref offset");
             return false;
         }
 
-        LogDebug("XRef: startxref points to offset %lld", (long long)xrefOffset);
 
         // 3. Process XRef chain (handle incremental updates via /Prev)
         std::set<size_t> visitedOffsets; // Prevent infinite loops
@@ -3630,7 +3574,6 @@ namespace pdf
         {
             if (visitedOffsets.count((size_t)xrefOffset))
             {
-                LogDebug("XRef: Circular reference detected at offset %lld", (long long)xrefOffset);
                 break;
             }
             visitedOffsets.insert((size_t)xrefOffset);
@@ -3646,7 +3589,6 @@ namespace pdf
                 _data[checkPos + 2] == 'e' && _data[checkPos + 3] == 'f')
             {
                 // Traditional xref table
-                LogDebug("XRef: Parsing traditional xref at %lld", (long long)xrefOffset);
 
                 std::map<int, size_t> entries;
                 if (parseXRefTableAt(checkPos, entries))
@@ -3667,7 +3609,6 @@ namespace pdf
             else
             {
                 // XRef stream (PDF 1.5+)
-                LogDebug("XRef: Parsing xref stream at %lld", (long long)xrefOffset);
 
                 std::map<int, size_t> entries;
                 if (parseXRefStreamAt(checkPos, entries))
@@ -3699,7 +3640,6 @@ namespace pdf
                 if (prevNum)
                 {
                     xrefOffset = (int64_t)prevNum->value;
-                    LogDebug("XRef: Following /Prev to offset %lld", (long long)xrefOffset);
                 }
             }
         }
@@ -3707,7 +3647,6 @@ namespace pdf
         // 4. Store results
         _xrefTable = std::move(allEntries);
 
-        LogDebug("XRef: Loaded %zu entries", _xrefTable.size());
 
         return !_xrefTable.empty();
     }
@@ -4238,7 +4177,6 @@ namespace pdf
         {
             // Page dictionary bulunamadı - default A4 döndür
             // Bu durum parsing hatası olabilir ama render'ı kırmayalım
-            LogDebug("WARNING: Page %d dictionary not found, using default A4 size", pageIndex);
             wPt = 595.0;
             hPt = 842.0;
             return true;  // true döndür ki render devam etsin
@@ -4293,21 +4231,18 @@ namespace pdf
         int index,
         std::vector<uint8_t>& out) const
     {
-        LogDebug("Getting page %d contents", index);
 
         out.clear();
 
         auto page = getPageDictionary(index);
         if (!page)
         {
-            LogDebug("ERROR: Page %d not found", index);
             return false;
         }
 
         auto contObj = dictGetAny(page, "/Contents", "Contents");
         if (!contObj)
         {
-            LogDebug("Page %d has no contents", index);
             return false;
         }
 
@@ -4315,7 +4250,6 @@ namespace pdf
         auto resolved = resolveIndirect(contObj, visited);
         if (!resolved)
         {
-            LogDebug("ERROR: Could not resolve contents for page %d", index);
             return false;
         }
 
@@ -4325,7 +4259,6 @@ namespace pdf
         if (auto st = std::dynamic_pointer_cast<PdfStream>(resolved))
         {
             appendStreamData(st, out);
-            LogDebug("Page %d contents size: %zu bytes (single stream)", index, out.size());
             return !out.empty();
         }
 
@@ -4347,7 +4280,6 @@ namespace pdf
             return !out.empty();
         }
 
-        LogDebug("ERROR: Page %d contents is neither stream nor array", index);
         return false;
     }
 
@@ -4495,7 +4427,6 @@ namespace pdf
             cur = std::dynamic_pointer_cast<PdfDictionary>(parentObj);
         }
 
-        LogDebug("getPageResources: outStack.size=%zu", outStack.size());
         return !outStack.empty();
     }
 
@@ -4610,8 +4541,6 @@ namespace pdf
         parser.parse();
         return true;
     }
-
-
 
 
     bool PdfDocument::getPageXObjects(
@@ -5669,13 +5598,11 @@ namespace pdf
         size_t offset = 0;
         if (!parseAsn1Element(data, dataLen, offset, contentInfo))
         {
-            LogDebug("PKCS7: Failed to parse ContentInfo SEQUENCE");
             return false;
         }
 
         if (!contentInfo.isSequence() || contentInfo.childCount() < 2)
         {
-            LogDebug("PKCS7: ContentInfo is not a valid SEQUENCE (children=%zu)", contentInfo.childCount());
             return false;
         }
 
@@ -5683,7 +5610,6 @@ namespace pdf
         const auto* oidElem = contentInfo.childAt(0);
         if (!oidElem || !oidElem->isOid())
         {
-            LogDebug("PKCS7: Missing contentType OID");
             return false;
         }
         std::string contentTypeOid = oidElem->oidToString();
@@ -5698,14 +5624,12 @@ namespace pdf
         const auto* explicitWrap = contentInfo.childAt(1);
         if (!explicitWrap || !explicitWrap->isContextTag(0) || explicitWrap->children.empty())
         {
-            LogDebug("PKCS7: Missing [0] EXPLICIT wrapper for EnvelopedData");
             return false;
         }
 
         const auto* envelopedSeq = explicitWrap->childAt(0);
         if (!envelopedSeq || !envelopedSeq->isSequence())
         {
-            LogDebug("PKCS7: EnvelopedData is not a SEQUENCE");
             return false;
         }
 
@@ -5719,7 +5643,6 @@ namespace pdf
             result.version = versionElem->integerToInt();
             idx++;
         }
-        LogDebug("PKCS7: EnvelopedData version = %d", result.version);
 
         // [0] OriginatorInfo OPTIONAL (skip if present)
         if (idx < envelopedSeq->childCount()) {
@@ -5731,12 +5654,10 @@ namespace pdf
 
         // RecipientInfos SET
         if (idx >= envelopedSeq->childCount()) {
-            LogDebug("PKCS7: Missing RecipientInfos SET");
             return false;
         }
         const auto* recipientSet = envelopedSeq->childAt(idx);
         if (!recipientSet || !recipientSet->isSet()) {
-            LogDebug("PKCS7: RecipientInfos is not a SET");
             return false;
         }
         idx++;
@@ -6088,7 +6009,6 @@ namespace pdf
 
         if (encObjPos == std::string::npos)
         {
-            LogDebug("PDF Encrypt: Cannot find encrypt object %d in raw data", encryptObjNum);
             return false;
         }
 
@@ -6118,7 +6038,6 @@ namespace pdf
 
             if (filter == "/Adobe.PubSec" || filter == "Adobe.PubSec")
             {
-                LogDebug("PDF Encrypt: Certificate-based encryption (/Adobe.PubSec)");
                 _isEncrypted = true;
                 _isCertEncrypted = true;
                 return initCertEncryption(encryptDict, encData, encLen);
@@ -6156,7 +6075,6 @@ namespace pdf
         // Support V=1 (RC4-40), V=2 (RC4-128), V=4 (AES-128), V=5 (AES-256)
         if (_encryptV > 5 || _encryptR > 6)
         {
-            LogDebug("PDF Encrypt: Unsupported encryption V=%d R=%d", _encryptV, _encryptR);
             return false;
         }
 
@@ -6165,7 +6083,6 @@ namespace pdf
         {
             _useAES = true;
             _encryptKeyLength = 32;
-            LogDebug("PDF Encrypt: V=5 R=%d - AES-256 mode", _encryptR);
         }
 
         // For V=4, parse Crypt Filters to determine AES vs RC4
@@ -6184,7 +6101,6 @@ namespace pdf
             auto stmfName = std::dynamic_pointer_cast<PdfName>(stmfObj);
             std::string stmfFilter = stmfName ? stmfName->value : "/StdCF";
 
-            LogDebug("PDF Encrypt: V=4, StmF=%s", stmfFilter.c_str());
 
             if (cfDict)
             {
@@ -6206,30 +6122,25 @@ namespace pdf
                     auto cfmName = std::dynamic_pointer_cast<PdfName>(cfmObj);
                     std::string cfm = cfmName ? cfmName->value : "";
 
-                    LogDebug("PDF Encrypt: CF filter CFM=%s", cfm.c_str());
 
                     if (cfm == "/AESV2" || cfm == "AESV2")
                     {
                         _useAES = true;
-                        LogDebug("PDF Encrypt: Using AES-128-CBC encryption");
                     }
                     else
                     {
-                        LogDebug("PDF Encrypt: Using RC4 encryption (CFM=%s)", cfm.c_str());
                     }
                 }
                 else
                 {
                     // No CF details found, assume AES for V=4 R=4
                     _useAES = true;
-                    LogDebug("PDF Encrypt: No CF filter dict found, assuming AES for V=4");
                 }
             }
             else
             {
                 // No CF dictionary, assume AES for V=4 R=4
                 _useAES = true;
-                LogDebug("PDF Encrypt: No /CF dictionary, assuming AES for V=4");
             }
         }
 
@@ -6324,7 +6235,6 @@ namespace pdf
             }
             if (_encryptUE.size() != 32)
             {
-                LogDebug("PDF Encrypt: V=5 Invalid UE size (%zu, expected 32)", _encryptUE.size());
                 return false;
             }
 
@@ -6335,7 +6245,6 @@ namespace pdf
             // V=5: Use SHA-256 based key derivation (no fileID needed)
             if (!computeEncryptionKeyV5())
             {
-                LogDebug("PDF Encrypt: V=5 key derivation failed - password required");
                 return false;
             }
 
@@ -6343,10 +6252,8 @@ namespace pdf
             {
                 std::string kh;
                 for (auto b : _encryptKey) { char buf[4]; snprintf(buf, sizeof(buf), "%02x", b); kh += buf; }
-                LogDebug("PDF Encrypt: V=5 Computed key = %s", kh.c_str());
             }
 
-            LogDebug("PDF Encrypt: V=5 encryption key derived successfully");
             return true;
         }
 
@@ -6354,7 +6261,6 @@ namespace pdf
         // Fallback: try parsed encrypt dictionary if raw parsing failed
         if ((_encryptO.size() != 32 || _encryptU.size() != 32) && encryptDict)
         {
-            LogDebug("PDF Encrypt: Raw O/U parse failed (O=%zu, U=%zu), trying parsed dict", _encryptO.size(), _encryptU.size());
             auto getStringBytes = [&](const char* key) -> std::vector<uint8_t>
                 {
                     std::set<int> v;
@@ -6436,7 +6342,6 @@ namespace pdf
 
         if (_fileId.empty())
         {
-            LogDebug("PDF Encrypt: Cannot find /ID in trailer");
             return false;
         }
 
@@ -6446,7 +6351,6 @@ namespace pdf
         // Compute encryption key and verify
         if (!computeEncryptionKey())
         {
-            LogDebug("PDF Encrypt: Failed to compute encryption key");
             return false;
         }
 
@@ -6454,16 +6358,13 @@ namespace pdf
         {
             std::string kh;
             for (auto b : _encryptKey) { char buf[4]; snprintf(buf, sizeof(buf), "%02x", b); kh += buf; }
-            LogDebug("PDF Encrypt: Computed key = %s", kh.c_str());
         }
 
         if (!verifyUserPassword())
         {
-            LogDebug("PDF Encrypt: User password verification FAILED - password required");
             return false;
         }
 
-        LogDebug("PDF Encrypt: User password verification PASSED");
         return true;
     }
 
@@ -6821,7 +6722,6 @@ namespace pdf
                 SHA256::hash(hashInput.data(), hashInput.size(), hashResult);
 
                 userOk = (memcmp(hashResult, _encryptU.data(), 32) == 0);
-                LogDebug("PDF Encrypt: V5 R=5 user password check: %s", userOk ? "PASS" : "FAIL");
             }
             else if (_encryptR == 6)
             {
@@ -6836,7 +6736,6 @@ namespace pdf
                     nullptr, 0, hashResult);
 
                 userOk = (memcmp(hashResult, _encryptU.data(), 32) == 0);
-                LogDebug("PDF Encrypt: V5 R=6 user password check: %s", userOk ? "PASS" : "FAIL");
             }
         }
 
@@ -6912,7 +6811,6 @@ namespace pdf
                     hashResult);
                 ownerOk = (memcmp(hashResult, _encryptO.data(), 32) == 0);
             }
-            LogDebug("PDF Encrypt: V5 R=%d owner password check: %s", _encryptR, ownerOk ? "PASS" : "FAIL");
 
             if (ownerOk)
             {
@@ -6960,7 +6858,6 @@ namespace pdf
             }
         }
 
-        LogDebug("PDF Encrypt: V5 - neither user nor owner password matched");
         return false;
     }
 
@@ -7083,7 +6980,6 @@ namespace pdf
 
         if (objNum < 0)
         {
-            LogDebug("PDF Encrypt: Cannot find object number for stream, skipping");
             return;
         }
 
@@ -7098,7 +6994,6 @@ namespace pdf
             }
             else
             {
-                LogDebug("PDF Encrypt: AES decrypt failed for obj %d (%zu bytes)", objNum, stream->data.size());
             }
         }
         else
@@ -7151,7 +7046,6 @@ namespace pdf
         if (!_certSubFilter.empty() && _certSubFilter[0] == '/')
             _certSubFilter = _certSubFilter.substr(1);
 
-        LogDebug("PDF CertEncrypt: SubFilter = %s", _certSubFilter.c_str());
 
         // Parse /V, /R, /Length, /P
         visited.clear();
@@ -7175,7 +7069,6 @@ namespace pdf
             // Default to -4 (0xFFFFFFFC) = all permissions granted.
             // ISO 32000-2: "If the P entry is not present, all permissions are granted."
             _encryptP = -4;
-            LogDebug("PDF CertEncrypt: /P not found, defaulting to -4 (all permissions)");
         }
 
         // Default key length
@@ -7353,16 +7246,13 @@ namespace pdf
         }
 
         if (!foundRecipients || _recipientBlobs.empty()) {
-            LogDebug("PDF CertEncrypt: No /Recipients found");
             return false;
         }
 
-        LogDebug("PDF CertEncrypt: Found %zu recipient blob(s)", _recipientBlobs.size());
 
         // Parse PKCS#7 EnvelopedData from first (or only) recipient blob
         if (!parsePkcs7EnvelopedData(_recipientBlobs[0].data(), _recipientBlobs[0].size(), _envelopedData))
         {
-            LogDebug("PDF CertEncrypt: Failed to parse PKCS#7 EnvelopedData");
             return false;
         }
 
@@ -7382,7 +7272,6 @@ namespace pdf
     {
         if (!_isCertEncrypted || _recipientBlobs.empty()) return false;
 
-        LogDebug("PDF CertEncrypt: supplySeed called with %zu byte seed", seedLen);
 
         // Build hash input: seed + each recipient blob + 4-byte permissions (LE)
         std::vector<uint8_t> hashInput;
@@ -7510,13 +7399,11 @@ namespace pdf
             // V <= 4: MD5 based
             if (!computeEncryptionKey())
             {
-                LogDebug("PDF Encrypt: computeEncryptionKey failed with supplied password");
                 _userPassword.clear();
                 return false;
             }
             if (!verifyUserPassword())
             {
-                LogDebug("PDF Encrypt: Password verification FAILED");
                 _userPassword.clear();
                 return false;
             }
@@ -7525,12 +7412,10 @@ namespace pdf
 
         if (!keyOk)
         {
-            LogDebug("PDF Encrypt: Key derivation failed for supplied password");
             _userPassword.clear();
             return false;
         }
 
-        LogDebug("PDF Encrypt: Password accepted, decrypting streams...");
         _encryptionReady = true;
 
         // Re-decrypt all streams with the new key

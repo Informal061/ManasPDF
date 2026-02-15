@@ -10,8 +10,8 @@ namespace pdf
         if (!face || glyphId == 0 || pixelSize <= 0)
             return nullptr;
 
-        // Minimum pixel size - çok küçük fontlar render edilemez
-        // Minimum 4px, çünkü daha küçük fontlar okunamaz
+        // Minimum pixel size - ï¿½ok kï¿½ï¿½ï¿½k fontlar render edilemez
+        // Minimum 4px, ï¿½ï¿½nkï¿½ daha kï¿½ï¿½ï¿½k fontlar okunamaz
         const int MIN_PIXEL_SIZE = 4;
         const int MAX_PIXEL_SIZE = 512;
 

@@ -30,7 +30,7 @@ namespace pdf
         int pageIndex;
         int width;
         int height;
-        
+
         bool operator<(const PageCacheKey& other) const
         {
             if (docPtr != other.docPtr) return docPtr < other.docPtr;
@@ -103,7 +103,7 @@ namespace pdf
             if (bitmap.empty()) return;
 
             std::lock_guard<std::mutex> lock(_mutex);
-            
+
             // Check memory limit
             size_t newSize = bitmap.size();
             while (_totalMemory + newSize > MAX_MEMORY && !_cache.empty())
@@ -112,7 +112,7 @@ namespace pdf
             }
 
             PageCacheKey key = { docPtr, pageIndex, width, height };
-            
+
             CachedPage page;
             page.bitmap = bitmap;
             page.width = width;
@@ -137,7 +137,7 @@ namespace pdf
         void clearDocument(const void* docPtr)
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            
+
             for (auto it = _cache.begin(); it != _cache.end(); )
             {
                 if (it->first.docPtr == docPtr)

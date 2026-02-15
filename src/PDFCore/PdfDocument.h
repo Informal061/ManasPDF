@@ -233,10 +233,10 @@ namespace pdf
         // ==================== Link Extraction API ====================
         bool getPageLinks(int pageIndex, std::vector<PdfLinkInfo>& outLinks) const;
 
-        // Named destination çözümleme (GoTo action'larda string /D değeri için)
+        // Named destination resolution (for GoTo action string /D values)
         std::shared_ptr<PdfArray> resolveNamedDestination(const std::string& name) const;
 
-        // Destination array'den ([pageRef /XYZ ...]) sayfa indeksini çöz
+        // Resolve page index from destination array ([pageRef /XYZ ...])
         int resolvePageFromDestArray(const std::shared_ptr<PdfArray>& destArr) const;
 
         // ==================== Encryption Public API ====================
@@ -258,7 +258,7 @@ namespace pdf
 
         std::map<int, size_t> _xrefTable;
 
-        // Object Stream (ObjStm) desteği — XRef type 2 girdileri
+        // Object Stream (ObjStm) support - XRef type 2 entries
         struct ObjStmEntry { int objStmNum; int indexInStream; };
         std::map<int, ObjStmEntry> _objStmEntries;
         std::shared_ptr<PdfObject> loadFromObjStm(int objNum, int objStmNum, int indexInStream);

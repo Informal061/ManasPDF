@@ -13,11 +13,11 @@ namespace pdf
             Close
         } type;
 
-        // MoveTo / LineTo için x,y
+        // MoveTo / LineTo for x,y
         double x = 0;
         double y = 0;
 
-        // CurveTo için kontrol noktaları
+        // CurveTo for kontrol noktaları
         double x1 = 0, y1 = 0;
         double x2 = 0, y2 = 0;
         double x3 = 0, y3 = 0;

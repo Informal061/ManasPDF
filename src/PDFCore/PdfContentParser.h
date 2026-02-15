@@ -33,7 +33,7 @@ namespace pdf
 
         void parse();
 
-        // ✅ Set inherited clipping state from parent (for Form XObjects)
+        // Set inherited clipping state from parent (for Form XObjects)
         void setInheritedClipping(const PdfPath& clipPath, const PdfMatrix& clipCTM, bool evenOdd = false)
         {
             _inheritedClippingPath = clipPath;
@@ -128,7 +128,7 @@ namespace pdf
         int _clipLayerCount = 0;
         std::stack<int> _clipLayerCountStack;
 
-        // ✅ Inherited clipping from parent Form XObject
+        // Inherited clipping from parent Form XObject
         // This should be applied IN ADDITION to any local clipping
         PdfPath _inheritedClippingPath;
         PdfMatrix _inheritedClippingPathCTM;

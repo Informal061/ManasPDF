@@ -67,7 +67,7 @@ namespace pdf
         static const int W = 8;
         static const int H = 12;
 
-        // Çok basit bir ascii font (placeholder)
+        // Very simple ASCII font (placeholder)
         for (int yy = 0; yy < H; yy++)
             for (int xx = 0; xx < W; xx++)
                 if ((xx + yy + c) % 7 == 0) // tamamen random fake font :)
