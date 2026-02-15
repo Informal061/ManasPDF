@@ -1,10 +1,18 @@
-# ManasPDF
+<p align="center">
+  <img src="assets/logo.png" alt="ManasPDF Logo" width="150">
+</p>
 
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange)]()
-[![Status](https://img.shields.io/badge/status-in%20development-yellow)]()
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+<h1 align="center">ManasPDF</h1>
 
-A high-performance, GPU-accelerated PDF rendering engine written in C++ with a .NET wrapper and WPF viewer control.
+<p align="center">
+  <a href=""><img src="https://img.shields.io/badge/version-0.1.0--alpha-orange" alt="Version"></a>
+  <a href=""><img src="https://img.shields.io/badge/status-in%20development-yellow" alt="Status"></a>
+  <a href=""><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
+</p>
+
+<p align="center">
+  A high-performance, GPU-accelerated PDF rendering engine written in C++ with a .NET wrapper and WPF viewer control.
+</p>
 
 Developed by **[The Big Studio](https://www.thebigstudio.net)**
 
