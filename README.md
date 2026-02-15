@@ -8,6 +8,8 @@ A high-performance, GPU-accelerated PDF rendering engine written in C++ with a .
 
 Developed by **[The Big Studio](https://www.thebigstudio.net)**
 
+**[Website & Screenshots](https://thebigstudio.net/en/ManasPDF)** | **[Download Setup (Windows x64)](https://thebigstudio.net/downloads/ManasPDFSetup.exe)**
+
 > **Alpha Release** - This project is in active development. APIs may change between versions. Not recommended for production use yet. Feedback and bug reports are welcome!
 
 ## Overview
