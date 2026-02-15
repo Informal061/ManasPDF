@@ -33,7 +33,7 @@ namespace pdf
 
         void parse();
 
-        // Set inherited clipping state from parent (for Form XObjects)
+        // ✅ Set inherited clipping state from parent (for Form XObjects)
         void setInheritedClipping(const PdfPath& clipPath, const PdfMatrix& clipCTM, bool evenOdd = false)
         {
             _inheritedClippingPath = clipPath;
@@ -128,7 +128,11 @@ namespace pdf
         int _clipLayerCount = 0;
         std::stack<int> _clipLayerCountStack;
 
-        // Inherited clipping from parent Form XObject
+        // SMask layer count for current q/Q level
+        int _smaskLayerCount = 0;
+        std::stack<int> _smaskLayerCountStack;
+
+        // ✅ Inherited clipping from parent Form XObject
         // This should be applied IN ADDITION to any local clipping
         PdfPath _inheritedClippingPath;
         PdfMatrix _inheritedClippingPathCTM;
@@ -178,6 +182,12 @@ namespace pdf
 
         void renderXObjectDo(const std::string& xName);
         PdfMatrix readMatrix6(const std::shared_ptr<PdfObject>& obj) const;
+
+        // SMask: Render a Form XObject to luminosity bitmap
+        bool renderFormToLuminosityMask(
+            const std::shared_ptr<PdfStream>& formStream,
+            std::vector<uint8_t>& outAlpha,
+            int& outW, int& outH);
 
         bool resolvePatternToGradient(
             const std::string& patternName,

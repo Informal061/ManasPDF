@@ -52,14 +52,14 @@ namespace pdf
         static const int LUT_SIZE = 4096;
         bool hasLUT = false;
         std::vector<float> lutR;  // [LUT_SIZE] Red values
-        std::vector<float> lutG;  // [LUT_SIZE] Green values
+        std::vector<float> lutG;  // [LUT_SIZE] Green values  
         std::vector<float> lutB;  // [LUT_SIZE] Blue values
 
         // =====================================================
         // COLOR EVALUATION
         // =====================================================
 
-        // Ana renk hesaplama - LUT varsa LUT'tan, if absent stop'lardan
+        // Ana renk hesaplama - LUT varsa LUT'tan, yoksa stop'lardan
         void evaluateColor(double t, double outRgb[3]) const;
 
         // Dithering dahil (x,y koordinatina gore)

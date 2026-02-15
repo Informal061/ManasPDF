@@ -149,7 +149,7 @@ namespace pdf
 
     // -------------------------------------------------------------
     // DÜZELTİLEN FONKSİYON: STRING OKUMA GÜVENLİĞİ
-    // OCTAL ESCAPE SEQUENCES (\ddd) DESTEĞİ EKLENDİ
+    // ✅ OCTAL ESCAPE SEQUENCES (\ddd) DESTEĞİ EKLENDİ
     // -------------------------------------------------------------
     Token PdfLexer::readString()
     {
@@ -168,6 +168,7 @@ namespace pdf
         {
             if (++limit > MAX_STRING_LEN)
             {
+                LogDebug("ERROR: String too long at position %zu, truncating", startPos);
                 break;
             }
 
@@ -178,14 +179,14 @@ namespace pdf
                 if (_pos < _data.size())
                 {
                     char n = static_cast<char>(_data[_pos]);
-
-                    // OCTAL ESCAPE: \ddd (1-3 oktal rakam: 0-7)
+                    
+                    // ✅ OCTAL ESCAPE: \ddd (1-3 oktal rakam: 0-7)
                     // PDF spec: backslash followed by 1-3 octal digits
                     if (n >= '0' && n <= '7')
                     {
                         int octalValue = 0;
                         int digitCount = 0;
-
+                        
                         // En fazla 3 oktal rakam oku
                         while (_pos < _data.size() && digitCount < 3)
                         {
@@ -201,13 +202,13 @@ namespace pdf
                                 break;
                             }
                         }
-
-                        // Append as byte (0-255 range)
+                        
+                        // Byte olarak ekle (0-255 arası)
                         s.push_back(static_cast<char>(octalValue & 0xFF));
                     }
                     else
                     {
-                        // Other escape characters
+                        // Diğer escape karakterleri
                         ++_pos;
                         switch (n)
                         {
@@ -220,16 +221,16 @@ namespace pdf
                         case '(': s.push_back('('); break;
                         case ')': s.push_back(')'); break;
                         case '\r':
-                            // \<CR> veya \<CR><LF> → line continuation, append nothing
+                            // \<CR> veya \<CR><LF> → satır devamı, hiçbir şey ekleme
                             if (_pos < _data.size() && _data[_pos] == '\n')
                                 ++_pos;
                             break;
                         case '\n':
-                            // \<LF> → line continuation, append nothing
+                            // \<LF> → satır devamı, hiçbir şey ekleme
                             break;
-                        default:
-                            // Unknown escape: ignore backslash, append character
-                            s.push_back(n);
+                        default: 
+                            // Bilinmeyen escape: backslash'ı yok say, karakteri ekle
+                            s.push_back(n); 
                             break;
                         }
                     }

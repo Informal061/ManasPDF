@@ -151,6 +151,7 @@ namespace pdf
         // =====================================================
         // DEBUG: Sample değerlerini logla - sorunun kaynağını bul
         // =====================================================
+        LogDebug("=== SAMPLE DEBUG: %d samples ===", numSamples);
         for (int i = 0; i < numSamples; ++i)
         {
             double brightness = 0.299 * samplesR[i] + 0.587 * samplesG[i] + 0.114 * samplesB[i];
@@ -182,6 +183,7 @@ namespace pdf
             lutB[i] = (float)(samplesB[i1] + frac * (samplesB[i2] - samplesB[i1]));
         }
 
+        LogDebug("Built LUT: %d samples -> %d (MuPDF-style linear, NO SMOOTH)", numSamples, LUT_SIZE);
     }
 
     // =====================================================
@@ -356,6 +358,7 @@ namespace pdf
         if (!typeObj) return false;
 
         int funcType = (int)typeObj->value;
+        LogDebug("parseFunctionToGradient: type=%d, components=%d", funcType, numComponents);
 
         bool result = false;
         if (funcType == 0)
@@ -367,6 +370,7 @@ namespace pdf
         else if (funcType == 2)
         {
             result = parseFunctionType2(funcDict, doc, outGradient.stops, numComponents);
+            LogDebug("After Type2: stops=%zu", outGradient.stops.size());
         }
         else if (funcType == 3)
         {
@@ -376,6 +380,7 @@ namespace pdf
         }
         else
         {
+            LogDebug("WARNING: Unsupported function type: %d", funcType);
         }
 
         return result;
@@ -397,6 +402,7 @@ namespace pdf
 
         std::set<int> visited;
 
+        LogDebug("--- parseFunctionType0 (LUT MODE) ---");
 
         // Size
         visited.clear();
@@ -415,6 +421,7 @@ namespace pdf
             doc->resolve(funcDict->get("/BitsPerSample"), visited));
         int bitsPerSample = bpsObj ? (int)bpsObj->value : 8;
 
+        LogDebug("Samples: %d, BitsPerSample: %d", numSamples, bitsPerSample);
 
         // Range
         visited.clear();
@@ -522,6 +529,7 @@ namespace pdf
         // Smoothing highlight peak'lerini azaltıyordu!
         // =====================================================
 
+        LogDebug("Using %d original samples (no smoothing, preserving highlights)", numSamples);
 
         // =====================================================
         // LUT OLUŞTUR - orijinal sample'lardan
@@ -624,6 +632,7 @@ namespace pdf
             outStops.push_back(s);
         }
 
+        LogDebug("Type 2: N=%.2f, %zu stops", N, outStops.size());
         return true;
     }
 
@@ -784,6 +793,7 @@ namespace pdf
             gradient.stops.push_back(s);
         }
 
+        LogDebug("Type 3: Built %d-sample LUT (MuPDF-style runtime eval)", NUM_SAMPLES);
         return true;
     }
 
@@ -820,6 +830,7 @@ namespace pdf
             {
                 // Unknown component - try to guess based on common patterns
                 // Many DeviceN use spot colors that map to specific CMYK
+                LogDebug("DeviceN: Unknown component '%s', treating as gray", name.c_str());
                 // Add to black channel as fallback
                 cmyk[3] = std::max(cmyk[3], val);
             }
@@ -844,6 +855,7 @@ namespace pdf
             return false;
 
         int numComponents = (int)deviceNNames.size();
+        LogDebug("parseFunctionToGradientDeviceN: %d components", numComponents);
 
         std::set<int> visited;
         auto resolved = doc->resolve(funcObj, visited);
@@ -870,6 +882,7 @@ namespace pdf
         if (!typeObj) return false;
 
         int funcType = (int)typeObj->value;
+        LogDebug("DeviceN Function type: %d", funcType);
 
         // =====================================================
         // Type 2: Exponential Interpolation
@@ -915,6 +928,7 @@ namespace pdf
                 }
             }
 
+            LogDebug("DeviceN Type2: N=%.4f, C0 size=%zu, C1 size=%zu", N, c0.size(), c1.size());
 
             // Build LUT with 256 samples
             const int NUM_SAMPLES = 256;
@@ -959,6 +973,7 @@ namespace pdf
                 outGradient.stops.push_back(s);
             }
 
+            LogDebug("DeviceN Type2: Built %d-sample LUT", NUM_SAMPLES);
             return true;
         }
 
@@ -1109,9 +1124,11 @@ namespace pdf
                 outGradient.stops.push_back(s);
             }
 
+            LogDebug("DeviceN Type3: Built %d-sample LUT", NUM_SAMPLES);
             return true;
         }
 
+        LogDebug("DeviceN: Unsupported function type %d", funcType);
         return false;
     }
 

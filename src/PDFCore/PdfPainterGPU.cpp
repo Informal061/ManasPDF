@@ -2,6 +2,7 @@
 #include "PdfPainterGPU.h"
 #include "PdfDocument.h"
 #include "PdfPainter.h"  // PdfPattern
+#include "PdfContentParser.h"  // Type3 CharProc rendering
 #include "GlyphCache.h"  // CPU GlyphCache - shared with GPU
 #include "PdfDebug.h"    // LogDebug
 #include <algorithm>
@@ -153,6 +154,17 @@ namespace pdf
             }
         }
 
+        // Pop ALL remaining soft mask layers from D2D render target
+        while (!_softMaskLayerStack.empty() && _renderTarget)
+        {
+            _renderTarget->PopLayer();
+            SoftMaskLayerInfo smInfo = _softMaskLayerStack.top();
+            _softMaskLayerStack.pop();
+            if (smInfo.layer) smInfo.layer->Release();
+            if (smInfo.maskBrush) smInfo.maskBrush->Release();
+            if (smInfo.maskBitmap) smInfo.maskBitmap->Release();
+        }
+
         // Pop ALL remaining clip layers from D2D render target
         // This is critical - D2D crashes if EndDraw is called with layers still pushed
         while (!_clipLayerStack.empty() && _renderTarget)
@@ -187,6 +199,7 @@ namespace pdf
         // Clear brush cache before releasing render target
         clearBrushCache();
 
+        if (_deviceContext) { _deviceContext->Release(); _deviceContext = nullptr; }
         if (_renderTarget) { _renderTarget->Release(); _renderTarget = nullptr; }
         if (_wicBitmap) { _wicBitmap->Release(); _wicBitmap = nullptr; }
         // NOTE: Factories are STATIC - do NOT release them here
@@ -207,6 +220,7 @@ namespace pdf
 
         HRESULT hr;
 
+        LogDebug("GPU init: creating WIC bitmap %d x %d (%.1f MB)", _w, _h, (double)_w * _h * 4 / (1024.0 * 1024.0));
 
         // Create WIC Bitmap (per-instance, page-size dependent)
         // WICBitmapCacheOnLoad = contiguous layout (stride == w*4, faster getBuffer)
@@ -218,6 +232,7 @@ namespace pdf
         );
         if (FAILED(hr))
         {
+            LogDebug("ERROR: WIC CreateBitmap failed hr=0x%08X for %d x %d", (unsigned)hr, _w, _h);
             return false;
         }
 
@@ -233,12 +248,25 @@ namespace pdf
         hr = s_d2dFactory->CreateWicBitmapRenderTarget(_wicBitmap, rtProps, &_renderTarget);
         if (FAILED(hr))
         {
+            LogDebug("ERROR: D2D CreateWicBitmapRenderTarget failed hr=0x%08X for %d x %d", (unsigned)hr, _w, _h);
             return false;
         }
 
         // High quality rendering
         _renderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         _renderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+
+        // Try to get ID2D1DeviceContext for high-quality image interpolation
+        hr = _renderTarget->QueryInterface(__uuidof(ID2D1DeviceContext), (void**)&_deviceContext);
+        if (SUCCEEDED(hr) && _deviceContext)
+        {
+            LogDebug("GPU init: ID2D1DeviceContext available (high-quality interpolation enabled)");
+        }
+        else
+        {
+            _deviceContext = nullptr;
+            LogDebug("GPU init: ID2D1DeviceContext not available (using bilinear interpolation)");
+        }
 
         _initialized = true;
         return true;
@@ -262,6 +290,7 @@ namespace pdf
 
             if (FAILED(hr))
             {
+                LogDebug("WARNING: EndDraw failed hr=0x%08X (D2DERR_RECREATE_TARGET=0x%08X)", (unsigned)hr, (unsigned)D2DERR_RECREATE_TARGET);
                 _endDrawFailed = true;
             }
         }
@@ -1371,6 +1400,12 @@ namespace pdf
         double horizScale,
         double textAngle)
     {
+        // Type3 font branch: render CharProc streams instead of FreeType glyphs
+        if (font && font->isType3) {
+            return drawTextType3(x, y, raw, fontSizePt, advanceSizePt,
+                color, font, charSpacing, wordSpacing, horizScale, textAngle);
+        }
+
         // Early return checks
         if (!font || !font->ftReady || !font->ftFace) {
             return 0.0;
@@ -1441,7 +1476,7 @@ namespace pdf
 
         // ═══════════════════════════════════════════════════════════════
         // BASELINE SNAPPING: Yuvarlama farkından kaynaklanan dikey kayma
-        // fixsi. penY (baseline) bir kez integer'a yuvarlanır,
+        // düzeltmesi. penY (baseline) bir kez integer'a yuvarlanır,
         // böylece aynı satırdaki TÜM glyph'ler aynı Y seviyesine sahip olur.
         // bearingY offset'leri bu sabit baseline'a göre hesaplanır.
         // ═══════════════════════════════════════════════════════════════
@@ -1627,6 +1662,347 @@ namespace pdf
     }
 
     // ============================================
+    // TYPE3 FONT RENDERING
+    // ============================================
+
+    // Pre-parse d1 operator from CharProc stream to get bounding box
+    static bool parseD1FromStream(const std::vector<uint8_t>& stream,
+        double& wx, double& wy,
+        double& llx, double& lly, double& urx, double& ury)
+    {
+        // Simple scanner: look for "d1" operator preceded by 6 numbers
+        // Format: wx wy llx lly urx ury d1
+        std::vector<double> nums;
+        size_t pos = 0;
+        size_t len = stream.size();
+
+        while (pos < len)
+        {
+            // Skip whitespace
+            while (pos < len && (stream[pos] == ' ' || stream[pos] == '\n' ||
+                   stream[pos] == '\r' || stream[pos] == '\t'))
+                pos++;
+            if (pos >= len) break;
+
+            // Check for d0 or d1
+            if (pos + 1 < len && stream[pos] == 'd' && stream[pos + 1] == '1')
+            {
+                // Verify it's a word boundary
+                bool wordEnd = (pos + 2 >= len || stream[pos + 2] == ' ' ||
+                    stream[pos + 2] == '\n' || stream[pos + 2] == '\r');
+                if (wordEnd && nums.size() >= 6)
+                {
+                    size_t base = nums.size() - 6;
+                    wx = nums[base];     wy = nums[base + 1];
+                    llx = nums[base + 2]; lly = nums[base + 3];
+                    urx = nums[base + 4]; ury = nums[base + 5];
+                    return true;
+                }
+            }
+            if (pos + 1 < len && stream[pos] == 'd' && stream[pos + 1] == '0')
+            {
+                bool wordEnd = (pos + 2 >= len || stream[pos + 2] == ' ' ||
+                    stream[pos + 2] == '\n' || stream[pos + 2] == '\r');
+                if (wordEnd && nums.size() >= 2)
+                {
+                    size_t base = nums.size() - 2;
+                    wx = nums[base]; wy = nums[base + 1];
+                    llx = lly = urx = ury = 0;
+                    return true;
+                }
+            }
+
+            // Try to parse a number
+            if ((stream[pos] >= '0' && stream[pos] <= '9') ||
+                stream[pos] == '-' || stream[pos] == '.' || stream[pos] == '+')
+            {
+                size_t start = pos;
+                if (stream[pos] == '-' || stream[pos] == '+') pos++;
+                while (pos < len && ((stream[pos] >= '0' && stream[pos] <= '9') || stream[pos] == '.'))
+                    pos++;
+                std::string numStr((const char*)&stream[start], pos - start);
+                try { nums.push_back(std::stod(numStr)); }
+                catch (...) { nums.push_back(0); }
+            }
+            else
+            {
+                // Skip non-number token (operator name, etc.)
+                while (pos < len && stream[pos] != ' ' && stream[pos] != '\n' &&
+                       stream[pos] != '\r' && stream[pos] != '\t')
+                    pos++;
+            }
+        }
+        return false;
+    }
+
+    double PdfPainterGPU::drawTextType3(
+        double x, double y,
+        const std::string& raw,
+        double fontSizePt,
+        double advanceSizePt,
+        uint32_t color,
+        const PdfFontInfo* font,
+        double charSpacing,
+        double wordSpacing,
+        double horizScale,
+        double textAngle)
+    {
+        if (!font || !font->isType3 || raw.empty()) return 0.0;
+        if (!_renderTarget) return 0.0;
+
+        // In text block mode: DON'T flush fill batch
+        if (_inPageRender && !_inTextBlock)
+            flushFillBatch();
+
+        // Text rotation setup (same as FreeType path)
+        bool hasTextRotation = (std::abs(textAngle) > 0.001);
+        D2D1_MATRIX_3X2_F origTransform = D2D1::Matrix3x2F::Identity();
+        if (hasTextRotation && _renderTarget) {
+            if (_hasGlyphBatch) flushGlyphBatch();
+            _renderTarget->GetTransform(&origTransform);
+            float cx = (float)(x * _scaleX);
+            float cy = (float)(_h - y * _scaleY);
+            float angleDeg = (float)(-textAngle * 180.0 / 3.14159265358979);
+            D2D1_MATRIX_3X2_F rotMatrix = D2D1::Matrix3x2F::Rotation(angleDeg, D2D1::Point2F(cx, cy));
+            _renderTarget->SetTransform(rotMatrix * origTransform);
+        }
+
+        bool wasInDraw = _inDraw;
+        if (!_inDraw) beginDraw();
+
+        // Type3 FontMatrix: maps glyph space → text space
+        // Typically [0.001 0 0 0.001 0 0] or [0.00048828127 0 0 -0.00048828127 0 0]
+        const PdfMatrix& fm = font->type3FontMatrix;
+        double fmScaleX = std::abs(fm.a);
+        double fmScaleY = std::abs(fm.d);
+        if (fmScaleX < 1e-10) fmScaleX = 0.001;
+        if (fmScaleY < 1e-10) fmScaleY = 0.001;
+        bool fmFlipY = (fm.d < 0); // Chrome Type3 fonts often have negative d
+
+        // Starting position (device space)
+        double penX = x * _scaleX;
+        double penY = _h - y * _scaleY;
+        double baselineY = std::round(penY);
+
+        double totalAdvance = 0;
+
+        // Extract color components
+        uint8_t colorR = (color >> 16) & 0xFF;
+        uint8_t colorG = (color >> 8) & 0xFF;
+        uint8_t colorB = color & 0xFF;
+
+        // Process each character
+        for (unsigned char c : raw)
+        {
+            int code = (int)c;
+
+            // Get glyph name from encoding
+            std::string glyphName;
+            if (code >= 0 && code < 256 && !font->codeToGlyphName[code].empty()) {
+                glyphName = font->codeToGlyphName[code];
+            }
+
+            // Calculate advance from width table
+            double advPx = 0;
+            {
+                int glyphWidth = 0;
+                if (font->hasWidths && code >= font->firstChar &&
+                    code < font->firstChar + (int)font->widths.size()) {
+                    glyphWidth = font->widths[code - font->firstChar];
+                }
+                if (glyphWidth <= 0) glyphWidth = font->missingWidth;
+                if (glyphWidth <= 0) glyphWidth = (int)std::round(1.0 / fmScaleX * 0.5); // half em default
+
+                // Type3 widths are in glyph space; multiply by FontMatrix to get text space
+                // (Standard fonts use /1000, but Type3 uses fontMatrix.a which may differ)
+                double advPt = glyphWidth * fmScaleX * advanceSizePt;
+                advPt += charSpacing;
+                if (code == 32) advPt += wordSpacing;
+                advPt *= (horizScale / 100.0);
+                advPx = advPt * _scaleX;
+            }
+
+            // Look up CharProc
+            if (!glyphName.empty())
+            {
+                auto it = font->type3CharProcs.find(glyphName);
+                if (it != font->type3CharProcs.end() && !it->second.empty())
+                {
+                    const auto& charProcData = it->second;
+
+                    // Cache key: fontHash ^ glyphName (scale-independent since we use RENDER_EM)
+                    size_t cacheKey = font->fontHash;
+                    cacheKey ^= std::hash<std::string>{}(glyphName) + 0x9e3779b9 + (cacheKey << 6) + (cacheKey >> 2);
+
+                    // Final device pixel size per glyph unit (needed for drawing, independent of cache)
+                    double finalPixPerUnit = fmScaleY * fontSizePt * _scaleY;
+
+                    auto cacheIt = _type3Cache.find(cacheKey);
+                    if (cacheIt == _type3Cache.end())
+                    {
+                        // Render the CharProc to a bitmap
+                        // Pre-parse d1/d0 to get bounding box
+                        double wx = 0, wy = 0, llx = 0, lly = 0, urx = 0, ury = 0;
+                        parseD1FromStream(charProcData, wx, wy, llx, lly, urx, ury);
+
+                        // Normalize bbox: ensure positive width/height
+                        // Chrome Type3 fonts have negative Y (e.g. lly=-1228, ury=-190)
+                        double bboxMinX = std::min(llx, urx);
+                        double bboxMaxX = std::max(llx, urx);
+                        double bboxMinY = std::min(lly, ury);
+                        double bboxMaxY = std::max(lly, ury);
+                        double bboxW = bboxMaxX - bboxMinX;
+                        double bboxH = bboxMaxY - bboxMinY;
+
+                        // If bbox is empty (d0 or all zeros), use full em square
+                        if (bboxW < 1) { bboxMinX = 0; bboxMaxX = wx > 0 ? wx : 2048; bboxW = bboxMaxX - bboxMinX; }
+                        if (bboxH < 1) { bboxMinY = -2048; bboxMaxY = 0; bboxH = 2048; }
+
+                        // Render at a fixed resolution for quality, then scale to device size.
+                        const int RENDER_EM = 64;
+
+                        // Render bitmap at RENDER_EM resolution
+                        double renderScale = (bboxH > 1) ? (double)RENDER_EM / bboxH : RENDER_EM / 2048.0;
+                        int bmpW = std::max(4, std::min((int)std::ceil(bboxW * renderScale), 512));
+                        int bmpH = std::max(4, std::min((int)std::ceil(bboxH * renderScale), 512));
+
+                        // Create CPU painter for CharProc rendering
+                        PdfPainter cpuPainter(bmpW, bmpH, 1.0, 1.0);
+                        cpuPainter.clear(0xFF000000); // Black background
+
+                        // CTM: glyph space → PdfPainter bitmap coordinates
+                        // PdfPainter: Y=0 at bottom, Y=bmpH at top (internal mapY flips to memory)
+                        double sX = (double)bmpW / bboxW;
+                        double sY = (double)bmpH / bboxH;
+
+                        PdfMatrix glyphCTM;
+                        glyphCTM.a = sX;
+                        glyphCTM.b = 0;
+                        glyphCTM.c = 0;
+
+                        if (fmFlipY) {
+                            // Chrome Type3: fm.d < 0, glyph Y is inverted
+                            // More negative Y = visually higher = should map to high PdfPainter Y
+                            // PdfPainter_Y = (bboxMaxY - glyph_Y) * sY
+                            glyphCTM.d = -sY;
+                            glyphCTM.f = bboxMaxY * sY;
+                        } else {
+                            // Standard Type3: Y up in glyph space matches PdfPainter Y up
+                            glyphCTM.d = sY;
+                            glyphCTM.f = -bboxMinY * sY;
+                        }
+                        glyphCTM.e = -bboxMinX * sX;
+
+                        PdfGraphicsState childGs;
+                        childGs.ctm = glyphCTM;
+                        // White fill on black background for alpha extraction
+                        childGs.fillColor[0] = 1.0;
+                        childGs.fillColor[1] = 1.0;
+                        childGs.fillColor[2] = 1.0;
+
+                        // Build resource stack for CharProc
+                        std::vector<std::shared_ptr<PdfDictionary>> resStack;
+                        if (font->type3Resources) {
+                            resStack.push_back(font->type3Resources);
+                        }
+
+                        std::map<std::string, PdfFontInfo> charProcFonts;
+
+                        PdfContentParser charParser(
+                            charProcData,
+                            &cpuPainter,
+                            nullptr,
+                            0,
+                            &charProcFonts,
+                            childGs,
+                            resStack
+                        );
+                        charParser.parse();
+
+                        // Get rendered BGRA buffer and extract alpha
+                        std::vector<uint8_t> rendered = cpuPainter.getBuffer();
+                        Type3CachedGlyph cached;
+                        cached.width = bmpW;
+                        cached.height = bmpH;
+                        cached.bboxH = bboxH;
+                        cached.alpha.resize((size_t)bmpW * bmpH);
+
+                        // Extract coverage: any non-black pixel = glyph coverage
+                        // PdfPainter fills with the current fill color on black background
+                        for (int py = 0; py < bmpH; ++py) {
+                            for (int px = 0; px < bmpW; ++px) {
+                                size_t idx = ((size_t)py * bmpW + px) * 4;
+                                uint8_t b = rendered[idx + 0];
+                                uint8_t g = rendered[idx + 1];
+                                uint8_t r = rendered[idx + 2];
+                                // Use max channel as coverage (glyph was drawn on black)
+                                cached.alpha[py * bmpW + px] = (uint8_t)std::max({ (int)r, (int)g, (int)b });
+                            }
+                        }
+
+                        // Bearing: offset from pen position to glyph bitmap origin
+                        // Stored in glyph units (not device pixels) for scale-independent caching
+                        cached.bearingX = (int)std::round(bboxMinX); // glyph units
+
+                        // bearingY: distance from baseline (Y=0) to top of glyph in glyph units
+                        // For Chrome Type3 (fm.d<0): more negative Y = higher visually
+                        //   After fm.d flip: top of glyph = min(lly,ury) * fm.d (positive)
+                        //   = |bboxMinY| * fmScaleY (since bboxMinY is the most negative original Y)
+                        // For standard Type3: top of glyph = bboxMaxY
+                        if (fmFlipY) {
+                            // In Chrome Type3: bboxMinY is most negative original Y → highest point
+                            cached.bearingY = (int)std::round(std::abs(bboxMinY)); // glyph units
+                        } else {
+                            cached.bearingY = (int)std::round(bboxMaxY); // glyph units
+                        }
+
+                        _type3Cache[cacheKey] = std::move(cached);
+                        cacheIt = _type3Cache.find(cacheKey);
+                    }
+
+                    // Draw the cached glyph
+                    if (cacheIt != _type3Cache.end())
+                    {
+                        const auto& glyph = cacheIt->second;
+                        if (!glyph.alpha.empty() && glyph.width > 0 && glyph.height > 0)
+                        {
+                            // Scale from RENDER_EM bitmap to final device pixels
+                            // Final glyph height in device px = bboxH * finalPixPerUnit
+                            double finalH = glyph.bboxH * finalPixPerUnit;
+                            double glyphScale = finalH / (double)glyph.height;
+                            if (glyphScale < 0.01) glyphScale = 0.01;
+
+                            // destX: pen position + bearing offset in device pixels
+                            float destX = (float)(penX + glyph.bearingX * finalPixPerUnit);
+                            // destY: baseline - top of glyph in device pixels
+                            float destY = (float)(baselineY - glyph.bearingY * finalPixPerUnit);
+
+                            drawGlyphBitmapColored(
+                                glyph.alpha.data(),
+                                glyph.width, glyph.height, glyph.width,
+                                destX, destY,
+                                colorR, colorG, colorB,
+                                glyphScale, glyphScale);
+                        }
+                    }
+                }
+            }
+
+            penX += advPx;
+            totalAdvance += advPx;
+        }
+
+        // Restore rotation transform
+        if (hasTextRotation && _renderTarget) {
+            if (_hasGlyphBatch) flushGlyphBatch();
+            _renderTarget->SetTransform(origTransform);
+        }
+
+        if (!wasInDraw) endDraw();
+        return totalAdvance / _scaleX;
+    }
+
+    // ============================================
     // IMAGE RENDERING
     // ============================================
 
@@ -1661,7 +2037,7 @@ namespace pdf
             uint8_t b = rgba[i * 4 + 2];
             uint8_t a = rgba[i * 4 + 3];
 
-            // FIX: Premultiplied alpha for D2D
+            // ✅ FIX: Premultiplied alpha for D2D
             // When a < 255, RGB must be multiplied by alpha/255
             // When a == 0, RGB must be 0 (fully transparent pixel)
             if (a < 255)
@@ -1689,6 +2065,76 @@ namespace pdf
             D2D1::SizeU(w, h),
             bgra.data(),
             w * 4,
+            D2D1::BitmapProperties(
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            ),
+            &bitmap
+        );
+
+        return SUCCEEDED(hr) ? bitmap : nullptr;
+    }
+
+    ID2D1Bitmap* PdfPainterGPU::createScaledBitmapFromARGB(
+        const std::vector<uint8_t>& argb, int srcW, int srcH, int dstW, int dstH)
+    {
+        if (!_renderTarget || !s_wicFactory) return nullptr;
+        if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return nullptr;
+        if (dstW > 16384 || dstH > 16384) return nullptr;
+
+        size_t expectedSize = (size_t)srcW * srcH * 4;
+        if (argb.size() < expectedSize) return nullptr;
+
+        // Convert RGBA to BGRA premultiplied for WIC source
+        std::vector<uint8_t> bgra(expectedSize);
+        for (size_t i = 0; i < (size_t)srcW * srcH; ++i)
+        {
+            uint8_t r = argb[i * 4 + 0];
+            uint8_t g = argb[i * 4 + 1];
+            uint8_t b = argb[i * 4 + 2];
+            uint8_t a = argb[i * 4 + 3];
+            if (a < 255) {
+                if (a == 0) { r = g = b = 0; }
+                else { r = (uint8_t)((r * a) / 255); g = (uint8_t)((g * a) / 255); b = (uint8_t)((b * a) / 255); }
+            }
+            bgra[i * 4 + 0] = b;
+            bgra[i * 4 + 1] = g;
+            bgra[i * 4 + 2] = r;
+            bgra[i * 4 + 3] = a;
+        }
+
+        // Create WIC source bitmap from raw pixel data
+        IWICBitmap* wicSrc = nullptr;
+        HRESULT hr = s_wicFactory->CreateBitmapFromMemory(
+            srcW, srcH,
+            GUID_WICPixelFormat32bppPBGRA,
+            srcW * 4,
+            (UINT)bgra.size(),
+            bgra.data(),
+            &wicSrc
+        );
+        if (FAILED(hr) || !wicSrc) return nullptr;
+
+        // Create WIC scaler with high-quality Fant interpolation
+        IWICBitmapScaler* scaler = nullptr;
+        hr = s_wicFactory->CreateBitmapScaler(&scaler);
+        if (FAILED(hr) || !scaler) { wicSrc->Release(); return nullptr; }
+
+        hr = scaler->Initialize(wicSrc, dstW, dstH, WICBitmapInterpolationModeFant);
+        wicSrc->Release();
+        if (FAILED(hr)) { scaler->Release(); return nullptr; }
+
+        // Read scaled pixels
+        std::vector<uint8_t> scaledBgra((size_t)dstW * dstH * 4);
+        hr = scaler->CopyPixels(nullptr, dstW * 4, (UINT)scaledBgra.size(), scaledBgra.data());
+        scaler->Release();
+        if (FAILED(hr)) return nullptr;
+
+        // Create D2D bitmap from scaled data
+        ID2D1Bitmap* bitmap = nullptr;
+        hr = _renderTarget->CreateBitmap(
+            D2D1::SizeU(dstW, dstH),
+            scaledBgra.data(),
+            dstW * 4,
             D2D1::BitmapProperties(
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
             ),
@@ -1759,9 +2205,6 @@ namespace pdf
             bitmapData = &flippedArgb;
         }
 
-        ID2D1Bitmap* bitmap = createBitmapFromARGB(*bitmapData, imgW, imgH);
-        if (!bitmap) return;
-
         bool wasInDraw = _inDraw;
         if (!_inDraw) beginDraw();
 
@@ -1794,22 +2237,15 @@ namespace pdf
 
         if (ctm.d < 0)
         {
-            // Standard case: ctm.d < 0
-            // ctm.f is the TOP edge in PDF coordinates
-            // Image extends downward by |ctm.d|
             double pdfTop = ctm.f;
-            double pdfBottom = ctm.f + ctm.d;  // f - |d| since d < 0
-
+            double pdfBottom = ctm.f + ctm.d;
             top = _h - pdfTop * _scaleY;
             bottom = _h - pdfBottom * _scaleY;
         }
         else
         {
-            // Rare case: ctm.d > 0
-            // ctm.f is the BOTTOM edge, image extends upward
             double pdfBottom = ctm.f;
             double pdfTop = ctm.f + ctm.d;
-
             top = _h - pdfTop * _scaleY;
             bottom = _h - pdfBottom * _scaleY;
         }
@@ -1818,8 +2254,28 @@ namespace pdf
         if (left > right) std::swap(left, right);
         if (top > bottom) std::swap(top, bottom);
 
+        // Calculate destination pixel dimensions
+        int destPixW = (int)(right - left + 0.5);
+        int destPixH = (int)(bottom - top + 0.5);
+
+        // Use WIC high-quality downscaling when image is significantly larger than destination
+        ID2D1Bitmap* bitmap = nullptr;
+        if (destPixW > 0 && destPixH > 0 &&
+            (imgW > destPixW * 2 || imgH > destPixH * 2))
+        {
+            // Image is more than 2x larger than destination - use WIC Fant downscale
+            bitmap = createScaledBitmapFromARGB(*bitmapData, imgW, imgH, destPixW, destPixH);
+        }
+
+        if (!bitmap)
+        {
+            // Fallback: use original resolution
+            bitmap = createBitmapFromARGB(*bitmapData, imgW, imgH);
+        }
+        if (!bitmap) { if (!wasInDraw) endDraw(); return; }
+
         D2D1_RECT_F destRect = D2D1::RectF((float)left, (float)top, (float)right, (float)bottom);
-        _renderTarget->DrawBitmap(bitmap, destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        drawBitmapHighQuality(bitmap, destRect);
 
         if (!wasInDraw) endDraw();
         bitmap->Release();
@@ -1852,21 +2308,31 @@ namespace pdf
         _renderTarget->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         // Draw image
-        ID2D1Bitmap* bitmap = createBitmapFromARGB(argb, imgW, imgH);
+        D2D1_POINT_2F p0 = transformPoint(0, 0, ctm);
+        D2D1_POINT_2F p1 = transformPoint(1, 0, ctm);
+        D2D1_POINT_2F p2 = transformPoint(1, 1, ctm);
+        D2D1_POINT_2F p3 = transformPoint(0, 1, ctm);
+
+        float minX = std::min({ p0.x, p1.x, p2.x, p3.x });
+        float minY = std::min({ p0.y, p1.y, p2.y, p3.y });
+        float maxX = std::max({ p0.x, p1.x, p2.x, p3.x });
+        float maxY = std::max({ p0.y, p1.y, p2.y, p3.y });
+
+        int destPixW = (int)(maxX - minX + 0.5f);
+        int destPixH = (int)(maxY - minY + 0.5f);
+
+        ID2D1Bitmap* bitmap = nullptr;
+        if (destPixW > 0 && destPixH > 0 &&
+            (imgW > destPixW * 2 || imgH > destPixH * 2))
+        {
+            bitmap = createScaledBitmapFromARGB(argb, imgW, imgH, destPixW, destPixH);
+        }
+        if (!bitmap) bitmap = createBitmapFromARGB(argb, imgW, imgH);
+
         if (bitmap)
         {
-            D2D1_POINT_2F p0 = transformPoint(0, 0, ctm);
-            D2D1_POINT_2F p1 = transformPoint(1, 0, ctm);
-            D2D1_POINT_2F p2 = transformPoint(1, 1, ctm);
-            D2D1_POINT_2F p3 = transformPoint(0, 1, ctm);
-
-            float minX = std::min({ p0.x, p1.x, p2.x, p3.x });
-            float minY = std::min({ p0.y, p1.y, p2.y, p3.y });
-            float maxX = std::max({ p0.x, p1.x, p2.x, p3.x });
-            float maxY = std::max({ p0.y, p1.y, p2.y, p3.y });
-
             D2D1_RECT_F destRect = D2D1::RectF(minX, minY, maxX, maxY);
-            _renderTarget->DrawBitmap(bitmap, destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            drawBitmapHighQuality(bitmap, destRect);
             bitmap->Release();
         }
 
@@ -1921,35 +2387,37 @@ namespace pdf
             _renderTarget->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         }
 
-        // Create bitmap
-        ID2D1Bitmap* bitmap = createBitmapFromARGB(argb, imgW, imgH);
+        // Compute destination pixel size for pre-scaling decision
+        D2D1_POINT_2F dp0 = transformPoint(0, 0, ctm);
+        D2D1_POINT_2F dp1 = transformPoint(1, 0, ctm);
+        D2D1_POINT_2F dp2 = transformPoint(0, 1, ctm);
+        D2D1_POINT_2F dp3 = transformPoint(1, 1, ctm);
+        float dMinX = std::min({ dp0.x, dp1.x, dp2.x, dp3.x });
+        float dMinY = std::min({ dp0.y, dp1.y, dp2.y, dp3.y });
+        float dMaxX = std::max({ dp0.x, dp1.x, dp2.x, dp3.x });
+        float dMaxY = std::max({ dp0.y, dp1.y, dp2.y, dp3.y });
+        int destPixW = (int)(dMaxX - dMinX + 0.5f);
+        int destPixH = (int)(dMaxY - dMinY + 0.5f);
+
+        // Use WIC pre-scaling when image is significantly larger than destination
+        int bitmapW = imgW, bitmapH = imgH;
+        ID2D1Bitmap* bitmap = nullptr;
+        if (destPixW > 0 && destPixH > 0 &&
+            (imgW > destPixW * 2 || imgH > destPixH * 2))
+        {
+            bitmap = createScaledBitmapFromARGB(argb, imgW, imgH, destPixW, destPixH);
+            if (bitmap) { bitmapW = destPixW; bitmapH = destPixH; }
+        }
+        if (!bitmap) bitmap = createBitmapFromARGB(argb, imgW, imgH);
+
         if (bitmap && clipGeometry)
         {
-            // ================================================================
-            // BitmapBrush + FillGeometry approach
-            //
-            // This is the most reliable way to draw a transformed image
-            // inside a complex clipping path (oval, polygon, etc.)
-            //
-            // The brush transform maps bitmap pixel coordinates to
-            // screen coordinates. D2D reverse-maps each screen pixel
-            // inside the geometry to find the corresponding bitmap pixel.
-            // ================================================================
-
             float sx = _scaleX;
             float sy = _scaleY;
             float h = (float)_h;
 
-            // Build transform: bitmap pixels → screen coordinates
-            // Bitmap pixel (px, py) maps to unit square (px/imgW, py/imgH)
-            // Unit square maps through CTM to PDF page space
-            // PDF page space maps to screen space (scale + Y-flip)
-            //
-            // Screen.x = (ctm.a * px/imgW + ctm.c * py/imgH + ctm.e) * sx
-            // Screen.y = h - (ctm.b * px/imgW + ctm.d * py/imgH + ctm.f) * sy
-
-            float imgScaleX = 1.0f / imgW;
-            float imgScaleY = 1.0f / imgH;
+            float imgScaleX = 1.0f / bitmapW;
+            float imgScaleY = 1.0f / bitmapH;
 
             D2D1_MATRIX_3X2_F brushTransform = D2D1::Matrix3x2F(
                 (float)(ctm.a * sx * imgScaleX), (float)(-ctm.b * sy * imgScaleX),
@@ -1982,8 +2450,8 @@ namespace pdf
             float sx = _scaleX;
             float sy = _scaleY;
             float h = (float)_h;
-            float imgScaleX = 1.0f / imgW;
-            float imgScaleY = 1.0f / imgH;
+            float imgScaleX = 1.0f / bitmapW;
+            float imgScaleY = 1.0f / bitmapH;
 
             D2D1_MATRIX_3X2_F oldTransform;
             _renderTarget->GetTransform(&oldTransform);
@@ -1995,8 +2463,8 @@ namespace pdf
             );
 
             _renderTarget->SetTransform(imageTransform);
-            D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)imgW, (float)imgH);
-            _renderTarget->DrawBitmap(bitmap, destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)bitmapW, (float)bitmapH);
+            drawBitmapHighQuality(bitmap, destRect);
             _renderTarget->SetTransform(oldTransform);
 
             bitmap->Release();
@@ -2195,6 +2663,131 @@ namespace pdf
     }
 
     // ============================================
+    // SOFT MASK (SMask) - D2D Layer with Opacity Bitmap
+    // ============================================
+
+    void PdfPainterGPU::pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH)
+    {
+        if (!_renderTarget || maskAlpha.empty() || maskW <= 0 || maskH <= 0) return;
+
+        // Flush any pending operations before changing mask state
+        flushFillBatch();
+        flushGlyphBatch();
+
+        bool wasInDraw = _inDraw;
+        if (!_inDraw) beginDraw();
+
+        // Convert grayscale alpha mask to BGRA premultiplied bitmap
+        // Each pixel: (R,G,B) = (alpha, alpha, alpha), A = alpha
+        // This creates a luminosity-based opacity mask
+        size_t pixelCount = (size_t)maskW * (size_t)maskH;
+        std::vector<uint8_t> bgraMask(pixelCount * 4);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            uint8_t a = maskAlpha[i];
+            // Premultiplied alpha: RGB = alpha value (white * alpha)
+            bgraMask[i * 4 + 0] = a;  // B
+            bgraMask[i * 4 + 1] = a;  // G
+            bgraMask[i * 4 + 2] = a;  // R
+            bgraMask[i * 4 + 3] = a;  // A
+        }
+
+        // Create D2D bitmap for the opacity mask
+        D2D1_BITMAP_PROPERTIES bmpProps = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+
+        ID2D1Bitmap* maskBitmap = nullptr;
+        HRESULT hr = _renderTarget->CreateBitmap(
+            D2D1::SizeU(maskW, maskH),
+            bgraMask.data(),
+            maskW * 4,
+            bmpProps,
+            &maskBitmap
+        );
+
+        if (FAILED(hr) || !maskBitmap)
+        {
+            LogDebug("pushSoftMask: Failed to create mask bitmap (hr=0x%08x)", hr);
+            return;
+        }
+
+        // Create a BitmapBrush from the mask bitmap (D2D PushLayer needs a brush, not a bitmap)
+        ID2D1BitmapBrush* maskBrush = nullptr;
+        hr = _renderTarget->CreateBitmapBrush(
+            maskBitmap,
+            D2D1::BitmapBrushProperties(
+                D2D1_EXTEND_MODE_CLAMP,
+                D2D1_EXTEND_MODE_CLAMP
+            ),
+            &maskBrush
+        );
+        if (FAILED(hr) || !maskBrush)
+        {
+            LogDebug("pushSoftMask: Failed to create bitmap brush (hr=0x%08x)", hr);
+            maskBitmap->Release();
+            return;
+        }
+
+        // Create D2D layer
+        ID2D1Layer* layer = nullptr;
+        hr = _renderTarget->CreateLayer(&layer);
+        if (FAILED(hr) || !layer)
+        {
+            LogDebug("pushSoftMask: Failed to create layer (hr=0x%08x)", hr);
+            maskBrush->Release();
+            maskBitmap->Release();
+            return;
+        }
+
+        // Push layer with opacity mask brush
+        // The mask brush acts as per-pixel opacity for everything drawn within this layer
+        _renderTarget->PushLayer(
+            D2D1::LayerParameters(
+                D2D1::InfiniteRect(),    // content bounds
+                nullptr,                  // no geometric clip
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                D2D1::IdentityMatrix(),  // mask transform
+                1.0f,                    // opacity
+                maskBrush,               // opacity mask (BitmapBrush)
+                D2D1_LAYER_OPTIONS_NONE
+            ),
+            layer
+        );
+
+        // Save to stack for later pop
+        SoftMaskLayerInfo info;
+        info.layer = layer;
+        info.maskBitmap = maskBitmap;
+        info.maskBrush = maskBrush;
+        _softMaskLayerStack.push(info);
+
+        LogDebug("pushSoftMask: Pushed mask %dx%d (stack depth: %zu)", maskW, maskH, _softMaskLayerStack.size());
+    }
+
+    void PdfPainterGPU::popSoftMask()
+    {
+        if (!_renderTarget || _softMaskLayerStack.empty()) return;
+
+        // Flush any pending operations before changing mask state
+        flushFillBatch();
+        flushGlyphBatch();
+
+        // Pop the layer
+        _renderTarget->PopLayer();
+
+        // Release resources
+        SoftMaskLayerInfo info = _softMaskLayerStack.top();
+        _softMaskLayerStack.pop();
+
+        if (info.layer) info.layer->Release();
+        if (info.maskBrush) info.maskBrush->Release();
+        if (info.maskBitmap) info.maskBitmap->Release();
+
+        LogDebug("popSoftMask: Popped (stack depth: %zu)", _softMaskLayerStack.size());
+    }
+
+    // ============================================
     // PAGE RENDERING LIFECYCLE - BATCHING
     // ============================================
 
@@ -2261,7 +2854,7 @@ namespace pdf
         if (path.empty()) return;
 
         // If color OR fill mode changed, flush current batch
-        // FIX: Different fill modes must be in separate batches!
+        // ✅ FIX: Different fill modes must be in separate batches!
         if (_hasBatchedFills && (color != _batchColor || evenOdd != _batchEvenOdd))
         {
             flushFillBatch();
@@ -2275,7 +2868,7 @@ namespace pdf
         _fillBatch.push_back(std::move(bf));
 
         _batchColor = color;
-        _batchEvenOdd = evenOdd;  // Track fill mode
+        _batchEvenOdd = evenOdd;  // ✅ Track fill mode
         _hasBatchedFills = true;
 
         // Flush if batch gets too large (increased limit for combined geometry)
@@ -2317,7 +2910,7 @@ namespace pdf
         }
 
         // Set fill mode based on batch setting
-        // FIX: Use the correct fill mode for this batch
+        // ✅ FIX: Use the correct fill mode for this batch
         sink->SetFillMode(_batchEvenOdd ? D2D1_FILL_MODE_ALTERNATE : D2D1_FILL_MODE_WINDING);
 
         // Helper lambda for safe coordinate transformation
@@ -2421,6 +3014,32 @@ namespace pdf
         // Clear batch
         _fillBatch.clear();
         _hasBatchedFills = false;
+    }
+
+    // ============================================
+    // HIGH QUALITY IMAGE DRAWING
+    // ============================================
+
+    void PdfPainterGPU::drawBitmapHighQuality(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect, float opacity)
+    {
+        if (!bitmap) return;
+
+        if (_deviceContext)
+        {
+            // Use ID2D1DeviceContext::DrawBitmap with high-quality cubic interpolation
+            _deviceContext->DrawBitmap(
+                bitmap,
+                destRect,
+                opacity,
+                D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                nullptr  // source rect (null = entire bitmap)
+            );
+        }
+        else
+        {
+            // Fallback: use ID2D1RenderTarget::DrawBitmap with bilinear
+            _renderTarget->DrawBitmap(bitmap, destRect, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
     }
 
     // ============================================

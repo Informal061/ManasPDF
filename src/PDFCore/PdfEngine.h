@@ -28,22 +28,22 @@ typedef void* PDF_DOCUMENT;
 
 namespace pdf
 {
-    // Render quality state (SSAA level management during zoom)
+    // Zoom state için yardımcı struct
     struct RenderQuality
     {
         bool isZooming = false;
-        int ssaa = 1;
+        int ssaa = 1;  // 🚀 CHANGED: Default SSAA=1 for speed (was 2)
 
         void startZoom()
         {
             isZooming = true;
-            ssaa = 1;  // Fast render during zoom
+            ssaa = 1;  // Hızlı render
         }
 
         void endZoom()
         {
             isZooming = false;
-            ssaa = 1;  // Keep SSAA=1 for speed
+            ssaa = 1;  // 🚀 Keep SSAA=1 for speed
         }
 
         int getCurrentSSAA() const
@@ -69,6 +69,8 @@ namespace pdf
     {
     public:
         PdfEngine() = default;
+
+        void LogDebug(const char* format, ...);
 
         bool load(const std::vector<uint8_t>& data)
         {
@@ -152,7 +154,7 @@ namespace pdf
 // Zoom state management
 PDF_API void Pdf_SetZoomState(PDF_DOCUMENT doc, int isZooming);
 
-// Cache management
+// 🚀 Cache management
 PDF_API void Pdf_ClearCache(PDF_DOCUMENT doc);
 
 // Info & Debug
@@ -197,7 +199,7 @@ PDF_API int PDF_CALL Pdf_RenderPageToRgba_CPU(
     int* outW,
     int* outH);
 
-// FAST RENDER - No SSAA, ~4x faster (for preview/initial load)
+// 🚀 FAST RENDER - No SSAA, ~4x faster (for preview/initial load)
 PDF_API int PDF_CALL Pdf_RenderPageToRgba_Fast(
     PDF_DOCUMENT ptr,
     int pageIndex,

@@ -447,21 +447,6 @@ namespace pdf
         if (input.empty()) return false;
 
 #ifdef USE_OPENJPEG
-        // Debug log
-        static FILE* jp2Debug = nullptr;
-        if (!jp2Debug) {
-            char tempPath[MAX_PATH];
-            GetTempPathA(MAX_PATH, tempPath);
-            strcat_s(tempPath, MAX_PATH, "jpeg2000_debug.txt");
-            fopen_s(&jp2Debug, tempPath, "w");
-        }
-
-        if (jp2Debug) {
-            fprintf(jp2Debug, "=== JPEG2000Decode (OpenJPEG) ===\n");
-            fprintf(jp2Debug, "Input size: %zu bytes\n", input.size());
-            fflush(jp2Debug);
-        }
-
         // Determine codec format from signature
         OPJ_CODEC_FORMAT codecFormat = OPJ_CODEC_JP2;  // Default to JP2
 
@@ -517,10 +502,6 @@ namespace pdf
 
         // Decode image
         if (!opj_decode(codec, stream, image)) {
-            if (jp2Debug) {
-                fprintf(jp2Debug, "ERROR: opj_decode failed\n");
-                fflush(jp2Debug);
-            }
             opj_image_destroy(image);
             opj_stream_destroy(stream);
             opj_destroy_codec(codec);
@@ -530,26 +511,6 @@ namespace pdf
         // Get image dimensions
         width = image->x1 - image->x0;
         height = image->y1 - image->y0;
-
-        if (jp2Debug) {
-            fprintf(jp2Debug, "Decoded: %dx%d, numcomps=%d, color_space=%d\n",
-                width, height, image->numcomps, image->color_space);
-            for (int c = 0; c < image->numcomps && c < 4; c++) {
-                fprintf(jp2Debug, "  Comp[%d]: w=%d h=%d prec=%d sgnd=%d dx=%d dy=%d\n",
-                    c, image->comps[c].w, image->comps[c].h,
-                    image->comps[c].prec, image->comps[c].sgnd,
-                    image->comps[c].dx, image->comps[c].dy);
-            }
-            // Sample some pixel values
-            if (image->numcomps >= 3 && image->comps[0].data) {
-                int midIdx = (height / 2) * width + (width / 2);
-                fprintf(jp2Debug, "  Center pixel raw: R=%d G=%d B=%d\n",
-                    image->comps[0].data[midIdx],
-                    image->comps[1].data[midIdx],
-                    image->comps[2].data[midIdx]);
-            }
-            fflush(jp2Debug);
-        }
 
         if (width <= 0 || height <= 0 || image->numcomps < 1) {
             opj_image_destroy(image);
@@ -567,12 +528,6 @@ namespace pdf
         // Check color space - OPJ_CLRSPC_SRGB = 1, OPJ_CLRSPC_SYCC = 3
         bool isYCC = (image->color_space == OPJ_CLRSPC_SYCC ||
             image->color_space == OPJ_CLRSPC_EYCC);
-
-        if (jp2Debug) {
-            fprintf(jp2Debug, "Processing as %s, hasAlpha=%d\n",
-                isYCC ? "YCbCr" : "RGB", hasAlpha ? 1 : 0);
-            fflush(jp2Debug);
-        }
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -648,21 +603,6 @@ namespace pdf
             }
         }
 
-        // Debug: log some output pixel values
-        if (jp2Debug) {
-            int midIdx = ((height / 2) * width + (width / 2)) * 4;
-            fprintf(jp2Debug, "Output center pixel: R=%d G=%d B=%d A=%d\n",
-                argbOut[midIdx + 0], argbOut[midIdx + 1],
-                argbOut[midIdx + 2], argbOut[midIdx + 3]);
-
-            // Check a few more pixels
-            int cornerIdx = 0;
-            fprintf(jp2Debug, "Output top-left pixel: R=%d G=%d B=%d A=%d\n",
-                argbOut[cornerIdx + 0], argbOut[cornerIdx + 1],
-                argbOut[cornerIdx + 2], argbOut[cornerIdx + 3]);
-            fflush(jp2Debug);
-        }
-
         opj_image_destroy(image);
         opj_stream_destroy(stream);
         opj_destroy_codec(codec);
@@ -670,24 +610,6 @@ namespace pdf
         return true;
 #else
         // OpenJPEG not available - JPEG 2000 not supported
-        // Log error for debugging
-#ifdef _WIN32
-        static FILE* jp2Debug = nullptr;
-        if (!jp2Debug) {
-            char tempPath[MAX_PATH];
-            GetTempPathA(MAX_PATH, tempPath);
-            strcat_s(tempPath, MAX_PATH, "jpeg2000_debug.txt");
-            fopen_s(&jp2Debug, tempPath, "w");
-        }
-        if (jp2Debug) {
-            fprintf(jp2Debug, "JPEG 2000 decode failed: OpenJPEG not compiled in.\n");
-            fprintf(jp2Debug, "To enable JPEG 2000 support:\n");
-            fprintf(jp2Debug, "1. Install OpenJPEG: vcpkg install openjpeg:x64-windows\n");
-            fprintf(jp2Debug, "2. Add USE_OPENJPEG to preprocessor definitions\n");
-            fprintf(jp2Debug, "3. Link against openjp2.lib\n");
-            fflush(jp2Debug);
-        }
-#endif
         return false;
 #endif
     }

@@ -12,9 +12,9 @@ namespace pdf
 {
     // ============================================
     // FONT CACHE - Document-level FT_Face caching
-    //
-    // Problem: Her sayfa iï¿½in FT_New_Memory_Face ï¿½aï¿½rï¿½lï¿½yor (~100ms per font)
-    // Solution: Font program hash ile cache, aynï¿½ font iï¿½in aynï¿½ FT_Face kullan
+    // 
+    // Problem: Her sayfa için FT_New_Memory_Face çaðrýlýyor (~100ms per font)
+    // Solution: Font program hash ile cache, ayný font için ayný FT_Face kullan
     // ============================================
 
     // Hash font program data

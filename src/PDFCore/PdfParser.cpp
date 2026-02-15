@@ -15,6 +15,7 @@ namespace pdf
 
     bool PdfParser::parse()
     {
+        LogDebug("PdfParser::parse() started");
 
         size_t safetyCounter = 0;
         const size_t MAX_ITERATIONS = 500000;
@@ -27,17 +28,21 @@ namespace pdf
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             if (elapsed > MAX_DURATION)
             {
+                LogDebug("ERROR: Parse timeout after 30 seconds");
                 return false;
             }
 
             if (++safetyCounter > MAX_ITERATIONS)
             {
+                LogDebug("ERROR: Max iterations reached: %zu", safetyCounter);
                 break;
             }
 
-            // Her 1000 iterasyonda log
+            // ✅ Her 1000 iterasyonda log
             if (safetyCounter % 1000 == 0)
             {
+                LogDebug("Parse iteration: %zu, objects found: %zu",
+                    safetyCounter, _objects.size());
             }
 
             Token t = _lexer.peekToken();
@@ -60,6 +65,7 @@ namespace pdf
 
             int objNum = std::atoi(t1.text.c_str());
 
+            LogDebug("Parsing object %d at position %zu", objNum, _lexer.getPosition());
 
             PdfObjectPtr obj = parseObject();
             if (obj)
@@ -75,12 +81,14 @@ namespace pdf
                     break;
                 if (++innerSafe > 100000)
                 {
+                    LogDebug("ERROR: Stuck in endobj search for object %d", objNum);
                     break;
                 }
                 endTok = _lexer.nextToken();
             }
         }
 
+        LogDebug("PdfParser::parse() finished - found %zu objects", _objects.size());
         return true;
     }
 
@@ -135,7 +143,7 @@ namespace pdf
     {
         auto arr = std::make_shared<PdfArray>();
         int safety = 0;
-        const int MAX_ITEMS = 50000; // Limit artırıldı
+        const int MAX_ITEMS = 50000; // ✅ Limit artırıldı
 
         while (safety++ < MAX_ITEMS)
         {
@@ -244,7 +252,7 @@ namespace pdf
                     }
                 }
 
-                // ❗ Referans not → geri sar
+                // ❗ Referans değil → geri sar
                 _lexer.setPosition(savePos);
                 dict->entries[key.text] = parseAtomicObject(val);
                 continue;
@@ -255,6 +263,7 @@ namespace pdf
 
         return dict;
     }
+
 
 
     std::shared_ptr<PdfStream> PdfParser::parseStream(std::shared_ptr<PdfDictionary> dict)

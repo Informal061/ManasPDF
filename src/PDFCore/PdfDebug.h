@@ -1,35 +1,19 @@
 #pragma once
 
-// No-op debug macros for release builds.
-// Define PDF_ENABLE_DEBUG before including this header to enable logging.
+// ============================================
+// Production build: all logging disabled
+// ============================================
 
-#ifdef PDF_ENABLE_DEBUG
-
-#include <cstdio>
-#include <cstdarg>
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-inline void LogDebugImpl(const char* fmt, ...)
+namespace pdf
 {
-    char buf[2048];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-#ifdef _WIN32
-    OutputDebugStringA(buf);
-    OutputDebugStringA("\n");
-#else
-    fprintf(stderr, "%s\n", buf);
-#endif
+    class PdfDebug
+    {
+    public:
+        static inline void Init() {}
+        static inline void Log(const char*, ...) {}
+        static inline void Close() {}
+    };
 }
 
-#define LogDebug(...) LogDebugImpl(__VA_ARGS__)
-
-#else
-
+// No-op: all LogDebug calls compile to nothing
 #define LogDebug(...) ((void)0)
-
-#endif

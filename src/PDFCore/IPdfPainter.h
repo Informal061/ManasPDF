@@ -125,6 +125,12 @@ namespace pdf
         // Used when entering Form XObjects that should be clipped by parent's path
         virtual void pushClipPath(const std::vector<PdfPathSegment>& clipPath, const PdfMatrix& clipCTM, bool evenOdd = false) {}
         virtual void popClipPath() {}
+
+        // ==================== SOFT MASK (SMask) ====================
+        // Push a luminosity-based soft mask. The mask buffer is a grayscale alpha map
+        // (0=fully transparent, 255=fully opaque) at the render target's resolution.
+        virtual void pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH) {}
+        virtual void popSoftMask() {}
     };
 
 } // namespace pdf

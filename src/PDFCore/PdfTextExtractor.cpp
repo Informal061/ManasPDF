@@ -91,7 +91,7 @@ namespace pdf
     {
         if (!f) return (uint32_t)code;
 
-        // CID font for cidToUnicode kullan
+        // CID font için cidToUnicode kullan
         if (cid)
         {
             auto it = f->cidToUnicode.find((uint16_t)code);
@@ -99,24 +99,24 @@ namespace pdf
             return (code >= 0x20 && code <= 0xFFFF) ? (uint32_t)code : 0xFFFD;
         }
 
-        // Simple font for - PdfContentParser.cpp ile aynı mantık
+        // Simple font için - PdfContentParser.cpp ile aynı mantık
         if (code < 0 || code >= 256)
             return (uint32_t)code;
 
-        // 1) Önce hasSimpleMap check - ToUnicode CMap varsa kullan
+        // 1) Önce hasSimpleMap kontrolü - ToUnicode CMap varsa kullan
         if (f->hasSimpleMap && f->codeToUnicode[code] != 0)
         {
             return f->codeToUnicode[code];
         }
 
-        // 2) hasSimpleMap if absent encoding'e göre fallback
+        // 2) hasSimpleMap yoksa encoding'e göre fallback
         if (f->encoding == "/WinAnsiEncoding" || f->encoding.empty())
         {
             return WinAnsi[code];
         }
         else if (f->encoding == "/MacRomanEncoding")
         {
-            // MacRoman for basit fallback - ASCII range
+            // MacRoman için basit fallback - ASCII range
             return (uint32_t)code;
         }
 
@@ -143,7 +143,7 @@ namespace pdf
     void PdfTextCollectorPainter::setPageRotation(
         int degrees, double pageWPt, double pageHPt)
     {
-        // pageWPt ve pageHPt zaten rotation after değerler
+        // pageWPt ve pageHPt zaten rotation sonrası değerler
         // (getPageSize rotation'ı hesaba katıyor)
         // CTM de rotation'ı içeriyor, o yüzden text koordinatları
         // zaten doğru page space'te geliyor.
@@ -166,7 +166,7 @@ namespace pdf
         // page space'e çeviriyor. Yani buraya gelen (pageX, pageY) zaten
         // rotation uygulanmış koordinatlar!
         //
-        // getPageSize() de rotation after boyut döndürüyor.
+        // getPageSize() de rotation sonrası boyut döndürüyor.
         // Dolayısıyla rotation'a göre ayrı işlem yapmamıza GEREK YOK.
         //
         // Tek yapmamız gereken: PDF koordinat sisteminden (sol-alt orijin)
@@ -202,13 +202,6 @@ namespace pdf
         if (!font || raw.empty() || fontSizePt < 0.1)
             return 0.0;
 
-        static int debugCount = 0;
-        if (debugCount < 5) {
-
-            // İlk birkaç codeToUnicode değerini göster
-            debugCount++;
-        }
-
         // fontSizePt, charSpacing, wordSpacing hepsi "effective" degerler
         // (fontSize * tmScale * ctmScale tarafindan PdfContentParser'da hesaplandi)
         // Bunlar page-space point cinsinden.
@@ -217,7 +210,7 @@ namespace pdf
         const double hScale = horizScale / 100.0;
         const double S = TEXT_PT_TO_PX; // point -> pixel cevirici
 
-        // Font yuksekligi pixel as
+        // Font yuksekligi pixel olarak
         double fontPx = fontSizePt * S;
 
         // Text rotation support
@@ -230,7 +223,14 @@ namespace pdf
         double penPageY = y;  // Y tracking for rotated text
 
         auto addGlyph = [&](int code, uint32_t uni) {
-            double glyphW_pt = (getW1000(font, code) / 1000.0) * advanceSizePt;
+            double glyphW_pt;
+            if (font && font->isType3) {
+                double fmA = std::abs(font->type3FontMatrix.a);
+                if (fmA < 1e-10) fmA = 0.001;
+                glyphW_pt = getW1000(font, code) * fmA * advanceSizePt;
+            } else {
+                glyphW_pt = (getW1000(font, code) / 1000.0) * advanceSizePt;
+            }
             double advance_pt = glyphW_pt + charSpacing;
             if (code == 32 || uni == 32)
                 advance_pt += wordSpacing;
@@ -249,11 +249,6 @@ namespace pdf
             g.fontSize = fontPx;
             g.isSpace = (uni == 32 || uni == 0x00A0);
             _glyphs.push_back(g);
-
-            static int glyphDebugCount = 0;
-            if (glyphDebugCount < 20) {
-                glyphDebugCount++;
-            }
 
             if (hasTextRotation) {
                 penPageX += advance_pt * cosA;
@@ -345,6 +340,9 @@ namespace pdf
 
         int rotation = doc.getPageRotate(pageIndex);
 
+        // DEBUG: Sayfa boyutlarını logla
+        LogDebug("[TextExtract] Page %d: size=%.1fx%.1f pt, rotation=%d",
+            pageIndex, wPt, hPt, rotation);
 
         PdfTextCollectorPainter collector(wPt, hPt);
         collector.setPageRotation(rotation, wPt, hPt);
@@ -372,9 +370,9 @@ namespace pdf
         std::reverse(resStack.begin(), resStack.end());
 
         // Parse
-        // ÖNEMLİ: Rotation for initial CTM ayarla (renderPageToPainter ile aynı)
+        // ÖNEMLİ: Rotation için initial CTM ayarla (renderPageToPainter ile aynı)
         // Content stream rotation-öncesi (raw) koordinatlarda yazılmış.
-        // CTM ile rotation after koordinatlara dönüştürülüyor.
+        // CTM ile rotation sonrası koordinatlara dönüştürülüyor.
         double rawW = 0, rawH = 0;
         doc.getRawPageSize(pageIndex, rawW, rawH);
 

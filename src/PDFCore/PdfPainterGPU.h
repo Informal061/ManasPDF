@@ -131,6 +131,10 @@ namespace pdf
         void pushClipPath(const std::vector<PdfPathSegment>& clipPath, const PdfMatrix& clipCTM, bool evenOdd = false) override;
         void popClipPath() override;
 
+        // ==================== SOFT MASK (SMask) ====================
+        void pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH) override;
+        void popSoftMask() override;
+
     private:
         int _w, _h;
         double _scaleX, _scaleY;
@@ -147,7 +151,7 @@ namespace pdf
         };
 
         uint32_t _batchColor = 0;
-        bool _batchEvenOdd = false;  // Track fill mode for batching
+        bool _batchEvenOdd = false;  // ✅ Track fill mode for batching
         std::vector<BatchedFill> _fillBatch;
         bool _hasBatchedFills = false;
 
@@ -206,6 +210,14 @@ namespace pdf
         };
         std::stack<ClipLayerInfo> _clipLayerStack;
 
+        // ==================== SOFT MASK LAYER STACK ====================
+        struct SoftMaskLayerInfo {
+            ID2D1Layer* layer = nullptr;
+            ID2D1Bitmap* maskBitmap = nullptr;
+            ID2D1BitmapBrush* maskBrush = nullptr;
+        };
+        std::stack<SoftMaskLayerInfo> _softMaskLayerStack;
+
         // Direct2D objects - factories are STATIC (shared across all instances)
         static ID2D1Factory1* s_d2dFactory;
         static IWICImagingFactory* s_wicFactory;
@@ -215,6 +227,7 @@ namespace pdf
 
         // Per-instance render target and bitmap
         ID2D1RenderTarget* _renderTarget = nullptr;
+        ID2D1DeviceContext* _deviceContext = nullptr; // D2D1.1 for high-quality interpolation
         IWICBitmap* _wicBitmap = nullptr;
 
         // Rotation
@@ -240,11 +253,13 @@ namespace pdf
             const PdfMatrix& ctm,
             const PdfMatrix& gradientCTM);
 
-        // Pattern brush creation
+        // Pattern brush creation  
         ID2D1Brush* createPatternBrush(const PdfPattern& pattern, const PdfMatrix& ctm);
 
         // Image helpers
         ID2D1Bitmap* createBitmapFromARGB(const std::vector<uint8_t>& argb, int w, int h);
+        ID2D1Bitmap* createScaledBitmapFromARGB(const std::vector<uint8_t>& argb, int srcW, int srcH, int dstW, int dstH);
+        void drawBitmapHighQuality(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect, float opacity = 1.0f);
 
         // Legacy single glyph draw (used when not in batch mode)
         void drawGlyphBitmapColored(
@@ -252,6 +267,30 @@ namespace pdf
             float destX, float destY,
             uint8_t r, uint8_t g, uint8_t b,
             double scaleX = 1.0, double scaleY = 1.0);
+
+        // ==================== TYPE3 FONT RENDERING ====================
+        double drawTextType3(
+            double x, double y,
+            const std::string& raw,
+            double fontSizePt,
+            double advanceSizePt,
+            uint32_t color,
+            const PdfFontInfo* font,
+            double charSpacing,
+            double wordSpacing,
+            double horizScale,
+            double textAngle);
+
+        // Type3 glyph cache: key = fontHash ^ glyphName hash
+        struct Type3CachedGlyph {
+            std::vector<uint8_t> alpha;  // grayscale alpha bitmap
+            int width = 0;
+            int height = 0;
+            int bearingX = 0;  // left offset from glyph origin (glyph units)
+            int bearingY = 0;  // top offset from baseline (glyph units)
+            double bboxH = 0;  // bbox height in glyph units (for scale calculation)
+        };
+        std::map<size_t, Type3CachedGlyph> _type3Cache;
     };
 
 } // namespace pdf

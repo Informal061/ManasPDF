@@ -9,6 +9,7 @@
 
 #include "PdfObject.h"
 #include "PdfParser.h"
+#include "PdfGraphicsState.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -62,6 +63,12 @@ namespace pdf
         FT_Face ftFace = nullptr;
         bool ftReady = false;
         size_t fontHash = 0;
+
+        // ===== TYPE3 FONT SUPPORT =====
+        bool isType3 = false;
+        PdfMatrix type3FontMatrix;  // glyph space → user space (e.g. [0.001 0 0 0.001 0 0])
+        std::map<std::string, std::vector<uint8_t>> type3CharProcs;  // glyphName → decoded stream
+        std::shared_ptr<PdfDictionary> type3Resources;  // Resources for CharProc execution
 
         PdfFontInfo()
         {
@@ -233,10 +240,10 @@ namespace pdf
         // ==================== Link Extraction API ====================
         bool getPageLinks(int pageIndex, std::vector<PdfLinkInfo>& outLinks) const;
 
-        // Named destination resolution (for GoTo action string /D values)
+        // Named destination çözümleme (GoTo action'larda string /D değeri için)
         std::shared_ptr<PdfArray> resolveNamedDestination(const std::string& name) const;
 
-        // Resolve page index from destination array ([pageRef /XYZ ...])
+        // Destination array'den ([pageRef /XYZ ...]) sayfa indeksini çöz
         int resolvePageFromDestArray(const std::shared_ptr<PdfArray>& destArr) const;
 
         // ==================== Encryption Public API ====================
@@ -258,7 +265,7 @@ namespace pdf
 
         std::map<int, size_t> _xrefTable;
 
-        // Object Stream (ObjStm) support - XRef type 2 entries
+        // Object Stream (ObjStm) desteği — XRef type 2 girdileri
         struct ObjStmEntry { int objStmNum; int indexInStream; };
         std::map<int, ObjStmEntry> _objStmEntries;
         std::shared_ptr<PdfObject> loadFromObjStm(int objNum, int objStmNum, int indexInStream);

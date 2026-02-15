@@ -13,10 +13,10 @@ namespace pdf
     public:
         PdfParser(const std::vector<uint8_t>& data);
 
-        bool parse();  // PDF iï¿½indeki tï¿½m indirect object'leri okumaya ï¿½alï¿½ï¿½ï¿½r
+        bool parse();  // PDF içindeki tüm indirect object'leri okumaya çalýþýr
         const std::map<int, PdfObjectPtr>& objects() const;
         PdfObjectPtr parseObjectAt(size_t offset);
-
+        
 
     private:
         const std::vector<uint8_t>& _data;

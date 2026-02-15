@@ -66,6 +66,9 @@ namespace pdf
         double strokeAlpha = 1.0;    // CA - stroke alpha
         std::string blendMode = "/Normal";  // BM - blend mode
 
+        // ===== SOFT MASK (SMask) =====
+        bool hasSMask = false;       // true when SMask is active in this graphics state
+
         PdfGraphicsState()
         {
             ctm = PdfMatrix();
