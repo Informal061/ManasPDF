@@ -785,6 +785,37 @@ namespace pdf
             parseToken();
         }
 
+        // ★ Cleanup: Pop any remaining D2D clip/SMask layers
+        // Without this, D2D EndDraw() fails with D2DERR_INVALIDCALL due to unpaired PushLayer/PopLayer
+        // This happens when W operators exist outside any q/Q pair (common in many PDFs)
+        {
+            int totalClipPops = _clipLayerCount;
+            int totalSmaskPops = _smaskLayerCount;
+
+            // Also count clips/smasks from unmatched q operators (q without Q)
+            while (!_clipLayerCountStack.empty()) {
+                totalClipPops += _clipLayerCountStack.top();
+                _clipLayerCountStack.pop();
+            }
+            while (!_smaskLayerCountStack.empty()) {
+                totalSmaskPops += _smaskLayerCountStack.top();
+                _smaskLayerCountStack.pop();
+            }
+
+            if (totalClipPops > 0 && _painter) {
+                LogDebug("parse() cleanup: Popping %d remaining clip layers", totalClipPops);
+                for (int i = 0; i < totalClipPops; i++)
+                    _painter->popClipPath();
+            }
+            if (totalSmaskPops > 0 && _painter) {
+                LogDebug("parse() cleanup: Popping %d remaining SMask layers", totalSmaskPops);
+                for (int i = 0; i < totalSmaskPops; i++)
+                    _painter->popSoftMask();
+            }
+            _clipLayerCount = 0;
+            _smaskLayerCount = 0;
+        }
+
         LogDebug("PdfContentParser::parse() FINISHED - %zu iterations, %zu bytes",
             iterCount, _data.size());
     }
@@ -890,6 +921,42 @@ namespace pdf
 
     void PdfContentParser::op_f()
     {
+        // ========== DEBUG DISABLED FOR PERFORMANCE ==========
+        // Uncomment for debugging fill operations
+        /*
+        static FILE* fillDebug = nullptr;
+        static int fillCallCount = 0;
+        if (!fillDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat(tempPath, "fill_debug.txt");
+            fillDebug = fopen(tempPath, "w");
+            if (fillDebug) {
+                fprintf(fillDebug, "=== FILL DEBUG ===\n");
+                fprintf(fillDebug, "Log file: %s\n", tempPath);
+                fflush(fillDebug);
+            }
+        }
+        fillCallCount++;
+
+        int curveCount = 0, lineCount = 0, moveCount = 0;
+        for (const auto& seg : _currentPath) {
+            if (seg.type == PdfPathSegment::CurveTo) curveCount++;
+            else if (seg.type == PdfPathSegment::LineTo) lineCount++;
+            else if (seg.type == PdfPathSegment::MoveTo) moveCount++;
+        }
+
+        if (fillDebug) {
+            fprintf(fillDebug, "\n[op_f #%d] _currentPath.size=%zu, moves=%d, lines=%d, CURVES=%d\n",
+                fillCallCount, _currentPath.size(), moveCount, lineCount, curveCount);
+            fprintf(fillDebug, "  fillPatternName='%s'\n", _gs.fillPatternName.c_str());
+            fprintf(fillDebug, "  CTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                _gs.ctm.a, _gs.ctm.b, _gs.ctm.c, _gs.ctm.d, _gs.ctm.e, _gs.ctm.f);
+            fflush(fillDebug);
+        }
+        */
+        // ========== END DEBUG ==========
+
         // ✅ FIX: Skip completely transparent fills (alpha = 0)
         if (_gs.fillAlpha <= 0.001)
         {
@@ -1669,6 +1736,21 @@ namespace pdf
         _gs.fontSize = size;
         _currentFont = nullptr;
 
+        // DEBUG: Font secimi
+        {
+            static FILE* tfDbg = nullptr; // fopen("C:\\temp\\tf_debug.txt", "a");
+            if (tfDbg) {
+                fprintf(tfDbg, "Tf: fontName='%s', size=%.2f\n", fontName.c_str(), size);
+                if (_fonts) {
+                    fprintf(tfDbg, "  _fonts has %zu entries\n", _fonts->size());
+                    for (auto& kv : *_fonts) {
+                        fprintf(tfDbg, "    '%s' -> '%s'\n", kv.first.c_str(), kv.second.baseFont.c_str());
+                    }
+                }
+                fflush(tfDbg);
+            }
+        }
+
         if (_fonts)
         {
             auto it = _fonts->find(fontName);
@@ -2018,6 +2100,30 @@ namespace pdf
         if (!arr || !_painter || !_currentFont)
             return;
 
+        // ========== TJ DEBUG ==========
+        static FILE* tjDebug = nullptr;
+        if (!tjDebug) {
+            tjDebug = nullptr; // fopen("C:\\temp\\tj_debug.txt", "w");
+            if (tjDebug) {
+                fprintf(tjDebug, "=== TJ OPERATOR DEBUG ===\n");
+                fflush(tjDebug);
+            }
+        }
+        if (tjDebug) {
+            fprintf(tjDebug, "\n--- TJ Array: %zu items ---\n", arr->items.size());
+            fprintf(tjDebug, "Font: %s, encoding: %s\n",
+                _currentFont->baseFont.c_str(), _currentFont->encoding.c_str());
+            fprintf(tjDebug, "hasCodeToGid: %d, hasSimpleMap: %d\n",
+                _currentFont->hasCodeToGid ? 1 : 0, _currentFont->hasSimpleMap ? 1 : 0);
+            fprintf(tjDebug, "fontSize: %.2f, Tc: %.4f, Tw: %.4f\n",
+                _gs.fontSize, _gs.charSpacing, _gs.wordSpacing);
+            fprintf(tjDebug, "TextMatrix: [%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                _gs.textMatrix.a, _gs.textMatrix.b, _gs.textMatrix.c,
+                _gs.textMatrix.d, _gs.textMatrix.e, _gs.textMatrix.f);
+            fflush(tjDebug);
+        }
+        // ========== END DEBUG ==========
+
         // Effective font size hesapla (text matrix + CTM scale dahil)
         double tmScaleY = std::sqrt(_gs.textMatrix.c * _gs.textMatrix.c +
             _gs.textMatrix.d * _gs.textMatrix.d);
@@ -2121,7 +2227,41 @@ namespace pdf
         double y1 = popNumber();
         double x1 = popNumber();
 
+        // ========== DEBUG: op_c çağrıldı mı? ==========
+        static FILE* curveDebug = nullptr;
+        static int curveCallCount = 0;
+        if (!curveDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat(tempPath, "curve_parse_debug.txt");
+            curveDebug = fopen(tempPath, "w");
+            if (curveDebug) {
+                fprintf(curveDebug, "=== CURVE PARSE DEBUG ===\n");
+                fprintf(curveDebug, "Log file: %s\n", tempPath);
+                fflush(curveDebug);
+            }
+        }
+        curveCallCount++;
+        if (curveDebug && curveCallCount <= 100) {
+            fprintf(curveDebug, "[op_c #%d] (%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)\n",
+                curveCallCount, _cpX, _cpY, x1, y1, x2, y2, x3, y3);
+            fprintf(curveDebug, "  _currentPath.size before=%zu\n", _currentPath.size());
+            fflush(curveDebug);
+        }
+        // ========== END DEBUG ==========
+
         _currentPath.emplace_back(x1, y1, x2, y2, x3, y3);
+
+        // ========== DEBUG: Eklendi mi? ==========
+        if (curveDebug && curveCallCount <= 100) {
+            fprintf(curveDebug, "  _currentPath.size after=%zu\n", _currentPath.size());
+            if (!_currentPath.empty()) {
+                const auto& last = _currentPath.back();
+                fprintf(curveDebug, "  last segment type=%d\n", (int)last.type);
+            }
+            fflush(curveDebug);
+        }
+        // ========== END DEBUG ==========
 
         // ⚠️ KRİTİK
         _cpX = x3;
@@ -2207,6 +2347,35 @@ namespace pdf
 
     void PdfContentParser::op_fill_stroke()
     {
+        // ========== DEBUG: B operator tracking ==========
+        static FILE* bDebug = nullptr;
+        static int bCallCount = 0;
+        if (!bDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat(tempPath, "b_operator_debug.txt");
+            bDebug = fopen(tempPath, "w");
+            if (bDebug) {
+                fprintf(bDebug, "=== B OPERATOR (FILL+STROKE) DEBUG ===\n");
+                fflush(bDebug);
+            }
+        }
+        bCallCount++;
+
+        if (bDebug && (bCallCount <= 50 || bCallCount % 100 == 0)) {
+            fprintf(bDebug, "[B #%d] path.size=%zu, CTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+                bCallCount, _currentPath.size(),
+                _gs.ctm.a, _gs.ctm.b, _gs.ctm.c, _gs.ctm.d, _gs.ctm.e, _gs.ctm.f);
+
+            // First point if path not empty
+            if (!_currentPath.empty()) {
+                fprintf(bDebug, "  first pt: (%.2f, %.2f), painter=%p\n",
+                    _currentPath[0].x, _currentPath[0].y, (void*)_painter);
+            }
+            fflush(bDebug);
+        }
+        // ========== END DEBUG ==========
+
         if (_painter)
         {
             // ✅ FIX: Only fill if alpha > 0
@@ -2510,6 +2679,53 @@ namespace pdf
             std::string shadingName = popName();
             LogDebug("========== SHADING OPERATOR: '%s' ==========", shadingName.c_str());
 
+            // ========== DEBUG: sh operatörü path durumu ==========
+            static FILE* shDebug = nullptr;
+            static int shCallCount = 0;
+            if (!shDebug) {
+                char tempPath[MAX_PATH];
+                GetTempPathA(MAX_PATH, tempPath);
+                strcat(tempPath, "sh_debug.txt");
+                shDebug = fopen(tempPath, "w");
+                if (shDebug) {
+                    fprintf(shDebug, "=== SH OPERATOR DEBUG ===\n");
+                    fflush(shDebug);
+                }
+            }
+            shCallCount++;
+
+            // _clippingPath segment sayıları
+            int clipCurves = 0, clipLines = 0, clipMoves = 0;
+            for (const auto& seg : _clippingPath) {
+                if (seg.type == PdfPathSegment::CurveTo) clipCurves++;
+                else if (seg.type == PdfPathSegment::LineTo) clipLines++;
+                else if (seg.type == PdfPathSegment::MoveTo) clipMoves++;
+            }
+
+            // _currentPath segment sayıları
+            int curCurves = 0, curLines = 0, curMoves = 0;
+            for (const auto& seg : _currentPath) {
+                if (seg.type == PdfPathSegment::CurveTo) curCurves++;
+                else if (seg.type == PdfPathSegment::LineTo) curLines++;
+                else if (seg.type == PdfPathSegment::MoveTo) curMoves++;
+            }
+
+            if (shDebug) {
+                fprintf(shDebug, "\n[sh #%d] shadingName='%s'\n", shCallCount, shadingName.c_str());
+                fprintf(shDebug, "  _hasClippingPath=%d\n", _hasClippingPath ? 1 : 0);
+                fprintf(shDebug, "  _clippingPath: size=%zu, moves=%d, lines=%d, CURVES=%d\n",
+                    _clippingPath.size(), clipMoves, clipLines, clipCurves);
+                fprintf(shDebug, "  _currentPath:  size=%zu, moves=%d, lines=%d, CURVES=%d\n",
+                    _currentPath.size(), curMoves, curLines, curCurves);
+                fprintf(shDebug, "  _clippingPathCTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                    _clippingPathCTM.a, _clippingPathCTM.b, _clippingPathCTM.c,
+                    _clippingPathCTM.d, _clippingPathCTM.e, _clippingPathCTM.f);
+                fprintf(shDebug, "  _gs.ctm=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                    _gs.ctm.a, _gs.ctm.b, _gs.ctm.c, _gs.ctm.d, _gs.ctm.e, _gs.ctm.f);
+                fflush(shDebug);
+            }
+            // ========== END DEBUG ==========
+
             PdfMatrix shadingCTM = _gs.ctm;
 
             if (!_painter)
@@ -2521,6 +2737,11 @@ namespace pdf
             // Clipping path kontrolü
             if (!_hasClippingPath || _clippingPath.empty())
             {
+                if (shDebug) {
+                    fprintf(shDebug, "  -> Using _currentPath as clipping (hasClip=%d, clipEmpty=%d)\n",
+                        _hasClippingPath ? 1 : 0, _clippingPath.empty() ? 1 : 0);
+                    fflush(shDebug);
+                }
                 if (_currentPath.empty()) return;
                 _clippingPath = _currentPath;
                 _clippingPathCTM = _gs.ctm;
@@ -3305,6 +3526,53 @@ namespace pdf
             {
                 LogDebug("Decoded image: %dx%d", iw, ih);
 
+                // ========== DEBUG: İlk birkaç image'ı BMP olarak kaydet ==========
+                static int savedImageCount = 0;
+                if (savedImageCount < 5 && iw > 10 && ih > 10) {
+                    char bmpPath[MAX_PATH];
+                    GetTempPathA(MAX_PATH, bmpPath);
+                    char filename[32];
+                    sprintf(filename, "debug_image_%d.bmp", savedImageCount);
+                    strcat(bmpPath, filename);
+
+                    FILE* bmpFile = fopen(bmpPath, "wb");
+                    if (bmpFile) {
+                        // BMP Header
+                        int rowSize = ((iw * 3 + 3) / 4) * 4;
+                        int dataSize = rowSize * ih;
+                        int fileSize = 54 + dataSize;
+
+                        uint8_t header[54] = { 0 };
+                        header[0] = 'B'; header[1] = 'M';
+                        *(int*)&header[2] = fileSize;
+                        *(int*)&header[10] = 54;
+                        *(int*)&header[14] = 40;
+                        *(int*)&header[18] = iw;
+                        *(int*)&header[22] = ih;
+                        *(short*)&header[26] = 1;
+                        *(short*)&header[28] = 24;
+                        *(int*)&header[34] = dataSize;
+
+                        fwrite(header, 1, 54, bmpFile);
+
+                        // BMP pixels (bottom-up, BGR)
+                        std::vector<uint8_t> row(rowSize, 0);
+                        for (int y = ih - 1; y >= 0; y--) {
+                            for (int x = 0; x < iw; x++) {
+                                int srcIdx = (y * iw + x) * 4;
+                                row[x * 3 + 0] = argb[srcIdx + 2]; // B
+                                row[x * 3 + 1] = argb[srcIdx + 1]; // G
+                                row[x * 3 + 2] = argb[srcIdx + 0]; // R
+                            }
+                            fwrite(row.data(), 1, rowSize, bmpFile);
+                        }
+                        fclose(bmpFile);
+                        LogDebug("Saved debug image to: %s (%dx%d)", bmpPath, iw, ih);
+                    }
+                    savedImageCount++;
+                }
+                // ========== END DEBUG ==========
+
                 if (iw == 1 && ih == 1)
                 {
                     LogDebug("Skipping 1x1 image");
@@ -3363,6 +3631,44 @@ namespace pdf
                     image_ctm.a, image_ctm.b, image_ctm.c, image_ctm.d, image_ctm.e, image_ctm.f);
 
                 // ✅ Clipping path varsa drawImageClipped kullan
+                // ========== DEBUG: Image clipping durumu ==========
+                static FILE* imgClipDebug = nullptr;
+                static int imgClipCount = 0;
+                if (!imgClipDebug) {
+                    char tempPath[MAX_PATH];
+                    GetTempPathA(MAX_PATH, tempPath);
+                    strcat(tempPath, "image_clip_debug.txt");
+                    imgClipDebug = fopen(tempPath, "w");
+                    if (imgClipDebug) {
+                        fprintf(imgClipDebug, "=== IMAGE CLIPPING DEBUG ===\n");
+                        fflush(imgClipDebug);
+                    }
+                }
+                imgClipCount++;
+
+                if (imgClipDebug) {
+                    fprintf(imgClipDebug, "\n[Image #%d] size=%dx%d\n", imgClipCount, iw, ih);
+                    fprintf(imgClipDebug, "  _hasClippingPath=%d\n", _hasClippingPath ? 1 : 0);
+                    fprintf(imgClipDebug, "  _clippingPath.size=%zu\n", _clippingPath.size());
+
+                    if (!_clippingPath.empty()) {
+                        int curves = 0, lines = 0, moves = 0;
+                        for (const auto& seg : _clippingPath) {
+                            if (seg.type == PdfPathSegment::CurveTo) curves++;
+                            else if (seg.type == PdfPathSegment::LineTo) lines++;
+                            else if (seg.type == PdfPathSegment::MoveTo) moves++;
+                        }
+                        fprintf(imgClipDebug, "  clippingPath: moves=%d, lines=%d, CURVES=%d\n", moves, lines, curves);
+                    }
+                    fprintf(imgClipDebug, "  image_ctm=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+                        image_ctm.a, image_ctm.b, image_ctm.c, image_ctm.d, image_ctm.e, image_ctm.f);
+                    fprintf(imgClipDebug, "  _clippingPathCTM=[%.2f %.2f %.2f %.2f %.2f %.2f]\n",
+                        _clippingPathCTM.a, _clippingPathCTM.b, _clippingPathCTM.c,
+                        _clippingPathCTM.d, _clippingPathCTM.e, _clippingPathCTM.f);
+                    fflush(imgClipDebug);
+                }
+                // ========== END DEBUG ==========
+
                 // Apply clipping if needed
                 if (_hasClippingPath && !_clippingPath.empty()) {
                     // Check if clip path is a simple rect
@@ -3464,6 +3770,37 @@ namespace pdf
             // MuPDF: gstate->ctm = fz_concat(transform, gstate->ctm);
             childGs.ctm = PdfMul(formM, _gs.ctm);
 
+            // ★ Form XObject /BBox clipping (PDF spec: BBox defines clipping boundary)
+            bool pushedBBoxClip = false;
+            auto bboxObj = xoStream->dict->get("/BBox");
+            if (!bboxObj) bboxObj = xoStream->dict->get("BBox");
+            if (bboxObj && _painter)
+            {
+                auto bboxArr = std::dynamic_pointer_cast<PdfArray>(resolveObj(bboxObj));
+                if (bboxArr && bboxArr->items.size() >= 4)
+                {
+                    auto getNum = [&](int i) -> double {
+                        auto n = std::dynamic_pointer_cast<PdfNumber>(resolveObj(bboxArr->items[i]));
+                        return n ? n->value : 0;
+                    };
+                    double bx1 = getNum(0), by1 = getNum(1);
+                    double bx2 = getNum(2), by2 = getNum(3);
+
+                    // BBox rect as clip path (in form's coordinate space)
+                    std::vector<PdfPathSegment> bboxPath;
+                    bboxPath.push_back({ PdfPathSegment::MoveTo, bx1, by1 });
+                    bboxPath.push_back({ PdfPathSegment::LineTo, bx2, by1 });
+                    bboxPath.push_back({ PdfPathSegment::LineTo, bx2, by2 });
+                    bboxPath.push_back({ PdfPathSegment::LineTo, bx1, by2 });
+                    bboxPath.push_back({ PdfPathSegment::Close, 0, 0 });
+
+                    // Clip in the child's CTM space (form coords → device coords)
+                    _painter->pushClipPath(bboxPath, childGs.ctm, false);
+                    pushedBBoxClip = true;
+                    LogDebug("Form BBox clip: [%.1f %.1f %.1f %.1f]", bx1, by1, bx2, by2);
+                }
+            }
+
             LogDebug("Parsing child Form content...");
 
             PdfContentParser child(
@@ -3481,6 +3818,11 @@ namespace pdf
                 child.setInheritedClipping(_clippingPath, _clippingPathCTM, _clippingEvenOdd);
             }
             child.parse();
+
+            // Pop BBox clip if we pushed one
+            if (pushedBBoxClip && _painter) {
+                _painter->popClipPath();
+            }
 
             LogDebug("Child Form parsing complete");
             recursionDepth--;

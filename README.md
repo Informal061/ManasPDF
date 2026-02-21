@@ -5,7 +5,7 @@
 <h1 align="center">ManasPDF</h1>
 
 <p align="center">
-  <a href=""><img src="https://img.shields.io/badge/version-0.1.0--alpha-orange" alt="Version"></a>
+  <a href=""><img src="https://img.shields.io/badge/version-0.1.1--alpha-orange" alt="Version"></a>
   <a href=""><img src="https://img.shields.io/badge/status-in%20development-yellow" alt="Status"></a>
   <a href=""><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 </p>
@@ -363,6 +363,21 @@ ManasPDF/
 > **Planned:** [HarfBuzz](https://harfbuzz.github.io/) integration for complex text shaping (Arabic, Devanagari, etc.) is planned for a future release.
 
 See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
+
+## Changelog
+
+### 0.1.1-alpha (2026-02-21)
+
+**Zoom Improvements**
+- Instant zoom scaling for all pages — all pages resize immediately on zoom, not just visible ones
+- Mouse-centered zoom — Ctrl+Scroll zoom anchors to mouse position instead of jumping to another page
+- Viewport-anchored toolbar zoom — +/- buttons keep the current page in view
+
+**PDF Rendering Fixes**
+- CropBox origin offset — correct initial CTM for PDFs with non-zero CropBox/MediaBox origin
+- Text quality improvement — snap glyph cache scale to 1.0 when within 5% for sharper text rendering
+- Form XObject /BBox clipping — apply BBox boundary as clip rect when rendering Form XObjects
+- D2D clip layer cleanup — pop unpaired PushLayer calls at end of content stream parsing, preventing GPU EndDraw failure and CPU fallback, fixes page clipping for PDFs using shared Form XObjects
 
 ## License
 

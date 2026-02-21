@@ -202,6 +202,23 @@ namespace pdf
         if (!font || raw.empty() || fontSizePt < 0.1)
             return 0.0;
 
+        // DEBUG: Font bilgilerini logla
+        static int debugCount = 0;
+        if (debugCount < 5) {
+            LogDebug("[TextExtract] Font: name='%s' encoding='%s' hasSimpleMap=%d isCidFont=%d cidToUnicode.size=%zu",
+                font->baseFont.c_str(),
+                font->encoding.c_str(),
+                font->hasSimpleMap ? 1 : 0,
+                font->isCidFont ? 1 : 0,
+                font->cidToUnicode.size());
+
+            // İlk birkaç codeToUnicode değerini göster
+            LogDebug("[TextExtract] codeToUnicode sample: [65]=%u [66]=%u [67]=%u [84]=%u [85]=%u",
+                font->codeToUnicode[65], font->codeToUnicode[66], font->codeToUnicode[67],
+                font->codeToUnicode[84], font->codeToUnicode[85]);
+            debugCount++;
+        }
+
         // fontSizePt, charSpacing, wordSpacing hepsi "effective" degerler
         // (fontSize * tmScale * ctmScale tarafindan PdfContentParser'da hesaplandi)
         // Bunlar page-space point cinsinden.
@@ -249,6 +266,15 @@ namespace pdf
             g.fontSize = fontPx;
             g.isSpace = (uni == 32 || uni == 0x00A0);
             _glyphs.push_back(g);
+
+            // DEBUG: İlk birkaç glyph'i logla
+            static int glyphDebugCount = 0;
+            if (glyphDebugCount < 20) {
+                LogDebug("[TextExtract] glyph U+%04X '%c': pageX=%.1f y=%.1f -> bitmapPos=(%.1f,%.1f) fontPx=%.1f",
+                    uni, (uni >= 32 && uni < 127) ? (char)uni : '?',
+                    penPageX, hasTextRotation ? penPageY : y, bx, by - fontPx, fontPx);
+                glyphDebugCount++;
+            }
 
             if (hasTextRotation) {
                 penPageX += advance_pt * cosA;
@@ -370,29 +396,32 @@ namespace pdf
         std::reverse(resStack.begin(), resStack.end());
 
         // Parse
-        // ÖNEMLİ: Rotation için initial CTM ayarla (renderPageToPainter ile aynı)
-        // Content stream rotation-öncesi (raw) koordinatlarda yazılmış.
-        // CTM ile rotation sonrası koordinatlara dönüştürülüyor.
+        // ÖNEMLİ: Rotation + CropBox origin için initial CTM ayarla
         double rawW = 0, rawH = 0;
         doc.getRawPageSize(pageIndex, rawW, rawH);
 
+        double originX = 0, originY = 0;
+        doc.getPageBoxOrigin(pageIndex, originX, originY);
+
         PdfGraphicsState gs;
-        gs.ctm = PdfMatrix(); // Identity default
+        gs.ctm = PdfMatrix();
+        gs.ctm.e = -originX;
+        gs.ctm.f = -originY;
 
         if (rotation == 90) {
             gs.ctm.a = 0;  gs.ctm.b = -1;
             gs.ctm.c = 1;  gs.ctm.d = 0;
-            gs.ctm.e = 0;  gs.ctm.f = rawW;
+            gs.ctm.e = -originY;  gs.ctm.f = rawW + originX;
         }
         else if (rotation == 180) {
             gs.ctm.a = -1; gs.ctm.b = 0;
             gs.ctm.c = 0;  gs.ctm.d = -1;
-            gs.ctm.e = rawW; gs.ctm.f = rawH;
+            gs.ctm.e = rawW + originX; gs.ctm.f = rawH + originY;
         }
         else if (rotation == 270) {
             gs.ctm.a = 0;  gs.ctm.b = 1;
             gs.ctm.c = -1; gs.ctm.d = 0;
-            gs.ctm.e = rawH; gs.ctm.f = 0;
+            gs.ctm.e = rawH + originY; gs.ctm.f = -originX;
         }
 
         PdfContentParser parser(content, &collector, &doc,

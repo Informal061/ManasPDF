@@ -1461,6 +1461,12 @@ namespace pdf
         // Scale correction: if we render at different size than requested
         double scaleCorrection = pxSize / (double)pixelSize;
 
+        // Snap to 1.0 if within 5% — uses sharp pixel-perfect atlas path
+        // instead of blurry bilinear-scaled individual path.
+        // Max error per glyph: ~0.8px at 16px, barely visible.
+        if (std::abs(scaleCorrection - 1.0) < 0.05)
+            scaleCorrection = 1.0;
+
         // Horizontal compression: ratio of X-scale to Y-scale
         // For non-uniform text matrices like [7.2 0 0 8]:
         //   fontSizePt ∝ Y-scale (8), advanceSizePt ∝ X-scale (7.2)
@@ -1750,6 +1756,16 @@ namespace pdf
         if (!font || !font->isType3 || raw.empty()) return 0.0;
         if (!_renderTarget) return 0.0;
 
+        static int t3DebugCount = 0;
+        if (t3DebugCount < 20) {
+            LogDebug("[Type3] drawTextType3: font='%s' raw=%zu fontSize=%.2f advSize=%.2f scaleXY=(%.4f,%.4f) WxH=%dx%d charProcs=%zu",
+                font->baseFont.c_str(), raw.size(), fontSizePt, advanceSizePt,
+                _scaleX, _scaleY, _w, _h, font->type3CharProcs.size());
+            LogDebug("[Type3] FontMatrix: [%.8f %.8f %.8f %.8f]", font->type3FontMatrix.a, font->type3FontMatrix.b,
+                font->type3FontMatrix.c, font->type3FontMatrix.d);
+            t3DebugCount++;
+        }
+
         // In text block mode: DON'T flush fill batch
         if (_inPageRender && !_inTextBlock)
             flushFillBatch();
@@ -1802,6 +1818,14 @@ namespace pdf
                 glyphName = font->codeToGlyphName[code];
             }
 
+            static int t3GlyphDebug = 0;
+            if (t3GlyphDebug < 30) {
+                LogDebug("[Type3] code=0x%02X glyphName='%s' found=%d",
+                    code, glyphName.c_str(),
+                    !glyphName.empty() && font->type3CharProcs.count(glyphName) > 0);
+                t3GlyphDebug++;
+            }
+
             // Calculate advance from width table
             double advPx = 0;
             {
@@ -1830,48 +1854,53 @@ namespace pdf
                 {
                     const auto& charProcData = it->second;
 
-                    // Cache key: fontHash ^ glyphName (scale-independent since we use RENDER_EM)
+                    // Separate X and Y pixel-per-unit (non-uniform text matrix support)
+                    double ppuX = fmScaleX * advanceSizePt * _scaleX;  // glyph unit → device px (X)
+                    double ppuY = fmScaleY * fontSizePt * _scaleY;     // glyph unit → device px (Y)
+
+                    // Pre-parse d1/d0 to get bounding box
+                    double wx = 0, wy = 0, llx = 0, lly = 0, urx = 0, ury = 0;
+                    parseD1FromStream(charProcData, wx, wy, llx, lly, urx, ury);
+
+                    double bboxMinX = std::min(llx, urx);
+                    double bboxMaxX = std::max(llx, urx);
+                    double bboxMinY = std::min(lly, ury);
+                    double bboxMaxY = std::max(lly, ury);
+                    double bboxW = bboxMaxX - bboxMinX;
+                    double bboxH = bboxMaxY - bboxMinY;
+
+                    if (bboxW < 1) { bboxMinX = 0; bboxMaxX = wx > 0 ? wx : 2048; bboxW = bboxMaxX - bboxMinX; }
+                    if (bboxH < 1) { bboxMinY = -2048; bboxMaxY = 0; bboxH = 2048; }
+
+                    // Render at actual display size for pixel-perfect quality
+                    double finalDevW = bboxW * ppuX;
+                    double finalDevH = bboxH * ppuY;
+                    int bmpW = std::clamp((int)std::ceil(finalDevW), 4, 512);
+                    int bmpH = std::clamp((int)std::ceil(finalDevH), 8, 512);
+
+                    // Quantize to multiples of 4 to reduce cache entries across zoom levels
+                    bmpW = ((bmpW + 3) / 4) * 4;
+                    bmpH = ((bmpH + 3) / 4) * 4;
+
+                    // Cache key: fontHash ^ glyphName ^ quantized size
                     size_t cacheKey = font->fontHash;
                     cacheKey ^= std::hash<std::string>{}(glyphName) + 0x9e3779b9 + (cacheKey << 6) + (cacheKey >> 2);
-
-                    // Final device pixel size per glyph unit (needed for drawing, independent of cache)
-                    double finalPixPerUnit = fmScaleY * fontSizePt * _scaleY;
+                    cacheKey ^= ((size_t)bmpH << 16) | (size_t)bmpW;
 
                     auto cacheIt = _type3Cache.find(cacheKey);
                     if (cacheIt == _type3Cache.end())
                     {
-                        // Render the CharProc to a bitmap
-                        // Pre-parse d1/d0 to get bounding box
-                        double wx = 0, wy = 0, llx = 0, lly = 0, urx = 0, ury = 0;
-                        parseD1FromStream(charProcData, wx, wy, llx, lly, urx, ury);
+                        static int t3RenderDebug = 0;
+                        if (t3RenderDebug < 15) {
+                            LogDebug("[Type3] Rendering '%s': wx=%.0f bbox=[%.0f,%.0f,%.0f,%.0f] bmp=%dx%d fmFlipY=%d ppuXY=(%.6f,%.6f) devWH=(%.1f,%.1f)",
+                                glyphName.c_str(), wx, bboxMinX, bboxMinY, bboxMaxX, bboxMaxY, bmpW, bmpH, (int)fmFlipY, ppuX, ppuY, finalDevW, finalDevH);
+                        }
 
-                        // Normalize bbox: ensure positive width/height
-                        // Chrome Type3 fonts have negative Y (e.g. lly=-1228, ury=-190)
-                        double bboxMinX = std::min(llx, urx);
-                        double bboxMaxX = std::max(llx, urx);
-                        double bboxMinY = std::min(lly, ury);
-                        double bboxMaxY = std::max(lly, ury);
-                        double bboxW = bboxMaxX - bboxMinX;
-                        double bboxH = bboxMaxY - bboxMinY;
-
-                        // If bbox is empty (d0 or all zeros), use full em square
-                        if (bboxW < 1) { bboxMinX = 0; bboxMaxX = wx > 0 ? wx : 2048; bboxW = bboxMaxX - bboxMinX; }
-                        if (bboxH < 1) { bboxMinY = -2048; bboxMaxY = 0; bboxH = 2048; }
-
-                        // Render at a fixed resolution for quality, then scale to device size.
-                        const int RENDER_EM = 64;
-
-                        // Render bitmap at RENDER_EM resolution
-                        double renderScale = (bboxH > 1) ? (double)RENDER_EM / bboxH : RENDER_EM / 2048.0;
-                        int bmpW = std::max(4, std::min((int)std::ceil(bboxW * renderScale), 512));
-                        int bmpH = std::max(4, std::min((int)std::ceil(bboxH * renderScale), 512));
-
-                        // Create CPU painter for CharProc rendering
-                        PdfPainter cpuPainter(bmpW, bmpH, 1.0, 1.0);
+                        // SSAA=2 for anti-aliased edges (one-time cost per glyph, doesn't affect GPU frame rate)
+                        PdfPainter cpuPainter(bmpW, bmpH, 1.0, 1.0, 2);
                         cpuPainter.clear(0xFF000000); // Black background
 
-                        // CTM: glyph space → PdfPainter bitmap coordinates
-                        // PdfPainter: Y=0 at bottom, Y=bmpH at top (internal mapY flips to memory)
+                        // CTM: glyph space → bitmap coordinates
                         double sX = (double)bmpW / bboxW;
                         double sY = (double)bmpH / bboxH;
 
@@ -1881,13 +1910,9 @@ namespace pdf
                         glyphCTM.c = 0;
 
                         if (fmFlipY) {
-                            // Chrome Type3: fm.d < 0, glyph Y is inverted
-                            // More negative Y = visually higher = should map to high PdfPainter Y
-                            // PdfPainter_Y = (bboxMaxY - glyph_Y) * sY
                             glyphCTM.d = -sY;
                             glyphCTM.f = bboxMaxY * sY;
                         } else {
-                            // Standard Type3: Y up in glyph space matches PdfPainter Y up
                             glyphCTM.d = sY;
                             glyphCTM.f = -bboxMinY * sY;
                         }
@@ -1895,16 +1920,13 @@ namespace pdf
 
                         PdfGraphicsState childGs;
                         childGs.ctm = glyphCTM;
-                        // White fill on black background for alpha extraction
                         childGs.fillColor[0] = 1.0;
                         childGs.fillColor[1] = 1.0;
                         childGs.fillColor[2] = 1.0;
 
-                        // Build resource stack for CharProc
                         std::vector<std::shared_ptr<PdfDictionary>> resStack;
-                        if (font->type3Resources) {
+                        if (font->type3Resources)
                             resStack.push_back(font->type3Resources);
-                        }
 
                         std::map<std::string, PdfFontInfo> charProcFonts;
 
@@ -1912,77 +1934,75 @@ namespace pdf
                             charProcData,
                             &cpuPainter,
                             nullptr,
-                            0,
+                            -1,
                             &charProcFonts,
                             childGs,
                             resStack
                         );
                         charParser.parse();
 
-                        // Get rendered BGRA buffer and extract alpha
+                        // Extract alpha from rendered buffer
                         std::vector<uint8_t> rendered = cpuPainter.getBuffer();
                         Type3CachedGlyph cached;
                         cached.width = bmpW;
                         cached.height = bmpH;
+                        cached.bboxW = bboxW;
                         cached.bboxH = bboxH;
                         cached.alpha.resize((size_t)bmpW * bmpH);
 
-                        // Extract coverage: any non-black pixel = glyph coverage
-                        // PdfPainter fills with the current fill color on black background
                         for (int py = 0; py < bmpH; ++py) {
                             for (int px = 0; px < bmpW; ++px) {
                                 size_t idx = ((size_t)py * bmpW + px) * 4;
                                 uint8_t b = rendered[idx + 0];
                                 uint8_t g = rendered[idx + 1];
                                 uint8_t r = rendered[idx + 2];
-                                // Use max channel as coverage (glyph was drawn on black)
                                 cached.alpha[py * bmpW + px] = (uint8_t)std::max({ (int)r, (int)g, (int)b });
                             }
                         }
 
-                        // Bearing: offset from pen position to glyph bitmap origin
-                        // Stored in glyph units (not device pixels) for scale-independent caching
-                        cached.bearingX = (int)std::round(bboxMinX); // glyph units
-
-                        // bearingY: distance from baseline (Y=0) to top of glyph in glyph units
-                        // For Chrome Type3 (fm.d<0): more negative Y = higher visually
-                        //   After fm.d flip: top of glyph = min(lly,ury) * fm.d (positive)
-                        //   = |bboxMinY| * fmScaleY (since bboxMinY is the most negative original Y)
-                        // For standard Type3: top of glyph = bboxMaxY
+                        cached.bearingX = (int)std::round(bboxMinX);
                         if (fmFlipY) {
-                            // In Chrome Type3: bboxMinY is most negative original Y → highest point
-                            cached.bearingY = (int)std::round(std::abs(bboxMinY)); // glyph units
+                            cached.bearingY = (int)std::round(std::abs(bboxMinY));
                         } else {
-                            cached.bearingY = (int)std::round(bboxMaxY); // glyph units
+                            cached.bearingY = (int)std::round(bboxMaxY);
+                        }
+
+                        if (t3RenderDebug < 15) {
+                            int nonZero = 0;
+                            for (size_t pi = 0; pi < cached.alpha.size(); pi++)
+                                if (cached.alpha[pi] > 0) nonZero++;
+                            LogDebug("[Type3] Result: bmp=%dx%d bearing=(%d,%d) nonZero=%d/%zu",
+                                bmpW, bmpH, cached.bearingX, cached.bearingY, nonZero, cached.alpha.size());
+                            t3RenderDebug++;
                         }
 
                         _type3Cache[cacheKey] = std::move(cached);
                         cacheIt = _type3Cache.find(cacheKey);
                     }
 
-                    // Draw the cached glyph
+                    // Draw the cached glyph (separate X/Y scale for non-uniform text matrices)
                     if (cacheIt != _type3Cache.end())
                     {
                         const auto& glyph = cacheIt->second;
                         if (!glyph.alpha.empty() && glyph.width > 0 && glyph.height > 0)
                         {
-                            // Scale from RENDER_EM bitmap to final device pixels
-                            // Final glyph height in device px = bboxH * finalPixPerUnit
-                            double finalH = glyph.bboxH * finalPixPerUnit;
-                            double glyphScale = finalH / (double)glyph.height;
-                            if (glyphScale < 0.01) glyphScale = 0.01;
+                            double finalW = glyph.bboxW * ppuX;
+                            double finalH = glyph.bboxH * ppuY;
+                            double scaleGX = finalW / (double)glyph.width;
+                            double scaleGY = finalH / (double)glyph.height;
+                            if (scaleGX < 0.01) scaleGX = 0.01;
+                            if (scaleGY < 0.01) scaleGY = 0.01;
 
-                            // destX: pen position + bearing offset in device pixels
-                            float destX = (float)(penX + glyph.bearingX * finalPixPerUnit);
-                            // destY: baseline - top of glyph in device pixels
-                            float destY = (float)(baselineY - glyph.bearingY * finalPixPerUnit);
+                            // X bearing uses X ppu, Y bearing uses Y ppu
+                            float destX = (float)(penX + glyph.bearingX * ppuX);
+                            float destY = (float)(baselineY - glyph.bearingY * ppuY);
 
                             drawGlyphBitmapColored(
                                 glyph.alpha.data(),
                                 glyph.width, glyph.height, glyph.width,
                                 destX, destY,
                                 colorR, colorG, colorB,
-                                glyphScale, glyphScale);
+                                scaleGX, scaleGY);
                         }
                     }
                 }

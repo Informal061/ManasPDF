@@ -200,6 +200,7 @@ namespace pdf
         bool getPageSize(int pageIndex, double& wPt, double& hPt) const;
         bool getDisplayPageSize(int pageIndex, double& wPt, double& hPt) const;
         bool getRawPageSize(int pageIndex, double& wPt, double& hPt) const;
+        bool getPageBoxOrigin(int pageIndex, double& originX, double& originY) const;
         int  getPageRotate(int pageIndex) const;
 
         bool renderPageToPainter(int pageIndex, IPdfPainter& painter);

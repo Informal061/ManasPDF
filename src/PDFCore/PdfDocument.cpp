@@ -1398,6 +1398,26 @@ namespace pdf
             // MUTLAKA MAP'E KOY
             out[info.resourceName] = info;
 
+            // DEBUG: Her font icin log
+            {
+                static FILE* gpfDbg = nullptr; // fopen("C:\\temp\\getpagefonts_debug.txt", "a");
+                if (gpfDbg) {
+                    fprintf(gpfDbg, "  FONT: '%s' -> baseFont='%s', subtype='%s', encoding='%s'\n",
+                        info.resourceName.c_str(), info.baseFont.c_str(),
+                        info.subtype.c_str(), info.encoding.c_str());
+                    fprintf(gpfDbg, "    isCidFont=%d, cidToUnicode.size=%zu, fontProgram.size=%zu\n",
+                        info.isCidFont ? 1 : 0, info.cidToUnicode.size(), info.fontProgram.size());
+                    fprintf(gpfDbg, "    cidDefaultWidth=%d, cidWidths.size=%zu\n",
+                        info.cidDefaultWidth, info.cidWidths.size());
+                    // Ilk 10 cidWidth'i goster
+                    int cnt = 0;
+                    for (auto& kv : info.cidWidths) {
+                        if (cnt++ < 10)
+                            fprintf(gpfDbg, "      CID 0x%04X -> width=%d\n", kv.first, kv.second);
+                    }
+                    fflush(gpfDbg);
+                }
+            }
         }
 
         // ============================================
@@ -1429,6 +1449,19 @@ namespace pdf
         if (!fontDict) return false;
 
         LogDebug("loadFontsFromResourceDict: Found %zu fonts", fontDict->entries.size());
+
+        // DEBUG: Dosyaya yaz
+        {
+            static FILE* fontDbg = nullptr; // fopen("C:\\temp\\font_load_debug.txt", "w");
+            if (fontDbg) {
+                fprintf(fontDbg, "=== loadFontsFromResourceDict ===\n");
+                fprintf(fontDbg, "Found %zu fonts in resource dict\n", fontDict->entries.size());
+                for (auto& kv : fontDict->entries) {
+                    fprintf(fontDbg, "  Font entry: '%s'\n", kv.first.c_str());
+                }
+                fflush(fontDbg);
+            }
+        }
 
         // Her font için
         for (auto& kv : fontDict->entries)
@@ -2049,6 +2082,17 @@ namespace pdf
             // CID font icin: cidWidths bossa, FreeType'tan width hesapla
             // Embedded font veya sistem fontu olabilir
             // ================================================================
+            {
+                static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                if (cwDbg) {
+                    fprintf(cwDbg, "CID width check: font='%s' isCidFont=%d, cidWidths.empty=%d, cidToUnicode.size=%zu, fontProgram.size=%zu\n",
+                        info.resourceName.c_str(),
+                        info.isCidFont ? 1 : 0, info.cidWidths.empty() ? 1 : 0,
+                        info.cidToUnicode.size(), info.fontProgram.size());
+                    fflush(cwDbg);
+                }
+            }
+
             if (info.isCidFont && !info.fontProgram.empty())
             {
 
@@ -2057,6 +2101,11 @@ namespace pdf
 
                 if (!info.fontProgram.empty())
                 {
+                    static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                    if (cwDbg) {
+                        fprintf(cwDbg, "  -> Using embedded font (size=%zu)\n", info.fontProgram.size());
+                        fflush(cwDbg);
+                    }
                     // Embedded font
                     FT_Error err = FT_New_Memory_Face(
                         g_ftLib,
@@ -2065,6 +2114,13 @@ namespace pdf
                         0,
                         &widthFace
                     );
+                    {
+                        static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                        if (cwDbg) {
+                            fprintf(cwDbg, "  -> FT_New_Memory_Face result: err=%d, widthFace=%p\n", (int)err, (void*)widthFace);
+                            fflush(cwDbg);
+                        }
+                    }
                     if (err != 0) widthFace = nullptr;
                     needCleanup = true;
                 }
@@ -2083,9 +2139,24 @@ namespace pdf
                     needCleanup = true;
                 }
 
+                {
+                    static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                    if (cwDbg) {
+                        fprintf(cwDbg, "  -> widthFace after all loads: %p\n", (void*)widthFace);
+                        fflush(cwDbg);
+                    }
+                }
                 if (widthFace)
                 {
                     FT_UShort unitsPerEM = widthFace->units_per_EM;
+                    {
+                        static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                        if (cwDbg) {
+                            fprintf(cwDbg, "  -> unitsPerEM=%d, num_charmaps=%d, cidToUnicode.size=%zu\n",
+                                (int)unitsPerEM, widthFace->num_charmaps, info.cidToUnicode.size());
+                            fflush(cwDbg);
+                        }
+                    }
                     if (unitsPerEM == 0) unitsPerEM = 1000;
 
                     // Unicode charmap sec
@@ -2168,12 +2239,29 @@ namespace pdf
                 }
                 else
                 {
+                    static FILE* cwDbg = nullptr; // fopen("C:\\temp\\cidwidth_debug.txt", "a");
+                    if (cwDbg) {
+                        fprintf(cwDbg, "  -> FAILED: widthFace is NULL\n");
+                        fflush(cwDbg);
+                    }
                 }
             }
 
             // Map'e ekle
             fonts[info.resourceName] = info;
 
+            // DEBUG: Dosyaya font detaylarini yaz
+            {
+                static FILE* fontDbg = nullptr; // fopen("C:\\temp\\font_load_debug.txt", "a");
+                if (fontDbg) {
+                    fprintf(fontDbg, "  ADDED: '%s' -> BaseFont='%s', Subtype='%s', Encoding='%s', isCidFont=%d\n",
+                        info.resourceName.c_str(), info.baseFont.c_str(),
+                        info.subtype.c_str(), info.encoding.c_str(), info.isCidFont ? 1 : 0);
+                    fprintf(fontDbg, "    fontProgram.size=%zu, cidToUnicode.size=%zu\n",
+                        info.fontProgram.size(), info.cidToUnicode.size());
+                    fflush(fontDbg);
+                }
+            }
             LogDebug("    Font '%s' added to map", rn.c_str());
         }
 
@@ -4319,6 +4407,35 @@ namespace pdf
         return true;
     }
 
+    // CropBox/MediaBox origin — (0,0) değilse CTM'de offset gerekir
+    bool PdfDocument::getPageBoxOrigin(int pageIndex, double& originX, double& originY) const
+    {
+        originX = 0;
+        originY = 0;
+
+        auto page = getPageDictionary(pageIndex);
+        if (!page) return false;
+
+        double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+
+        // CropBox öncelikli (PDF Spec)
+        if (extractBox(page, "/CropBox", x1, y1, x2, y2))
+        {
+            originX = std::min(x1, x2);
+            originY = std::min(y1, y2);
+            return true;
+        }
+
+        if (extractBox(page, "/MediaBox", x1, y1, x2, y2))
+        {
+            originX = std::min(x1, x2);
+            originY = std::min(y1, y2);
+            return true;
+        }
+
+        return false;
+    }
+
     // Display page size (rotation-aware) - for UI and painter
     bool PdfDocument::getPageSize(int pageIndex, double& wPt, double& hPt) const
     {
@@ -4575,48 +4692,53 @@ namespace pdf
         // 4) Rotation değerini al
         const int rot = getPageRotate(pageIndex);
 
-        // 5) Initial CTM with rotation
-        // Content stream portrait MediaBox'a göre yazılmış.
-        // Rotation CTM ile landscape buffer'a doğru çizilmesini sağlıyoruz.
+        // 5) CropBox/MediaBox origin offset
+        double originX = 0, originY = 0;
+        getPageBoxOrigin(pageIndex, originX, originY);
+
+        // 6) Initial CTM = translate(-origin) × rotation
+        // Content stream MediaBox koordinat sisteminde yazılmış.
+        // CropBox origin (0,0) değilse content'i kaydırmamız lazım.
         PdfMatrix pageCTM;
         pageCTM.a = 1;
         pageCTM.b = 0;
         pageCTM.c = 0;
         pageCTM.d = 1;
-        pageCTM.e = 0;
-        pageCTM.f = 0;
+        pageCTM.e = -originX;
+        pageCTM.f = -originY;
 
         if (rot == 90) {
-            // 90° rotation: portrait content -> landscape buffer
-            // Content stream'deki CTM [0,1,-1,0,rawW,0] ile birleşince identity olur
-            // Transform: (x,y) -> (y, rawW - x)
+            // Combined: translate(-ox,-oy) then rotate 90°
+            // (x,y) -> (y-oy, rawW-x+ox)
             pageCTM.a = 0;
             pageCTM.b = -1;
             pageCTM.c = 1;
             pageCTM.d = 0;
-            pageCTM.e = 0;
-            pageCTM.f = rawW;
+            pageCTM.e = -originY;
+            pageCTM.f = rawW + originX;
         }
         else if (rot == 180) {
+            // Combined: translate(-ox,-oy) then rotate 180°
+            // (x,y) -> (rawW-x+ox, rawH-y+oy)
             pageCTM.a = -1;
             pageCTM.b = 0;
             pageCTM.c = 0;
             pageCTM.d = -1;
-            pageCTM.e = rawW;
-            pageCTM.f = rawH;
+            pageCTM.e = rawW + originX;
+            pageCTM.f = rawH + originY;
         }
         else if (rot == 270) {
-            // 270° rotation: portrait content -> landscape buffer  
-            // Transform: (x,y) -> (rawH - y, x)
+            // Combined: translate(-ox,-oy) then rotate 270°
+            // (x,y) -> (rawH-y+oy, x-ox)
             pageCTM.a = 0;
             pageCTM.b = 1;
             pageCTM.c = -1;
             pageCTM.d = 0;
-            pageCTM.e = rawH;
-            pageCTM.f = 0;
+            pageCTM.e = rawH + originY;
+            pageCTM.f = -originX;
         }
 
-        // 6) Initial graphics state
+        // 7) Initial graphics state
         PdfGraphicsState gs;
         gs.ctm = pageCTM;
         gs.lineWidth = 1.0;
@@ -4724,33 +4846,33 @@ namespace pdf
         // Rotation değerini al
         const int rot = getPageRotate(pageIndex);
 
-        // Initial CTM with rotation
+        // CropBox/MediaBox origin offset
+        double originX = 0, originY = 0;
+        getPageBoxOrigin(pageIndex, originX, originY);
+
+        // Initial CTM = translate(-origin) × rotation
         PdfGraphicsState gs;
         gs.ctm = PdfMatrix();
+        gs.ctm.e = -originX;
+        gs.ctm.f = -originY;
 
         if (rot == 90) {
-            gs.ctm.a = 0;
-            gs.ctm.b = -1;
-            gs.ctm.c = 1;
-            gs.ctm.d = 0;
-            gs.ctm.e = 0;
-            gs.ctm.f = rawW;
+            gs.ctm.a = 0;  gs.ctm.b = -1;
+            gs.ctm.c = 1;  gs.ctm.d = 0;
+            gs.ctm.e = -originY;
+            gs.ctm.f = rawW + originX;
         }
         else if (rot == 180) {
-            gs.ctm.a = -1;
-            gs.ctm.b = 0;
-            gs.ctm.c = 0;
-            gs.ctm.d = -1;
-            gs.ctm.e = rawW;
-            gs.ctm.f = rawH;
+            gs.ctm.a = -1; gs.ctm.b = 0;
+            gs.ctm.c = 0;  gs.ctm.d = -1;
+            gs.ctm.e = rawW + originX;
+            gs.ctm.f = rawH + originY;
         }
         else if (rot == 270) {
-            gs.ctm.a = 0;
-            gs.ctm.b = 1;
-            gs.ctm.c = -1;
-            gs.ctm.d = 0;
-            gs.ctm.e = rawH;
-            gs.ctm.f = 0;
+            gs.ctm.a = 0;  gs.ctm.b = 1;
+            gs.ctm.c = -1; gs.ctm.d = 0;
+            gs.ctm.e = rawH + originY;
+            gs.ctm.f = -originX;
         }
 
         gs.lineWidth = 1.0;
@@ -4801,25 +4923,30 @@ namespace pdf
 
         const int rot = getPageRotate(pageIndex);
 
+        // CropBox/MediaBox origin offset
+        double originX = 0, originY = 0;
+        getPageBoxOrigin(pageIndex, originX, originY);
+
+        // Initial CTM = translate(-origin) × rotation
         PdfMatrix pageCTM;
         pageCTM.a = 1; pageCTM.b = 0;
         pageCTM.c = 0; pageCTM.d = 1;
-        pageCTM.e = 0; pageCTM.f = 0;
+        pageCTM.e = -originX; pageCTM.f = -originY;
 
         if (rot == 90) {
             pageCTM.a = 0; pageCTM.b = -1;
             pageCTM.c = 1; pageCTM.d = 0;
-            pageCTM.e = 0; pageCTM.f = rawW;
+            pageCTM.e = -originY; pageCTM.f = rawW + originX;
         }
         else if (rot == 180) {
             pageCTM.a = -1; pageCTM.b = 0;
             pageCTM.c = 0; pageCTM.d = -1;
-            pageCTM.e = rawW; pageCTM.f = rawH;
+            pageCTM.e = rawW + originX; pageCTM.f = rawH + originY;
         }
         else if (rot == 270) {
             pageCTM.a = 0; pageCTM.b = 1;
             pageCTM.c = -1; pageCTM.d = 0;
-            pageCTM.e = rawH; pageCTM.f = 0;
+            pageCTM.e = rawH + originY; pageCTM.f = -originX;
         }
 
         PdfGraphicsState gs;
