@@ -9,7 +9,7 @@
 
     <!-- NuGet Package Metadata -->
     <PackageId>ManasPDF</PackageId>
-    <Version>0.1.1-alpha.2</Version>
+    <Version>0.1.2-alpha</Version>
     <Authors>The Big Studio</Authors>
     <Description>High-performance PDF rendering library for .NET. GPU-accelerated (Direct2D) with CPU fallback. Supports text extraction, links, encryption (password and certificate).</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
