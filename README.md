@@ -366,7 +366,7 @@ See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
 
 ## Changelog
 
-### 0.1.2-alpha (2026-02-27)
+### 0.1.2-alpha (2026-03-01)
 
 **Bug Fixes**
 - Fixed garbled text rendering for subset TrueType fonts with custom ToUnicode CMap
