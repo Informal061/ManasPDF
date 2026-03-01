@@ -42,8 +42,20 @@ namespace pdf
         {
             g_fallbackInitialized = true;
 
+            // DEBUG LOG
+            FILE* dbgFile = nullptr; // fopen("C:\\temp\\fallback_debug.txt", "w");
+            if (dbgFile) {
+                fprintf(dbgFile, "=== Initializing fallback font ===\n");
+                fflush(dbgFile);
+            }
+
             if (FT_Init_FreeType(&g_fallbackFTLib) == 0)
             {
+                if (dbgFile) {
+                    fprintf(dbgFile, "FreeType initialized OK\n");
+                    fflush(dbgFile);
+                }
+
                 // Windows sistem fontlarını dene
                 const char* fallbackFonts[] = {
                     "C:\\Windows\\Fonts\\arial.ttf",
@@ -55,21 +67,58 @@ namespace pdf
 
                 for (int i = 0; fallbackFonts[i] != nullptr; ++i)
                 {
+                    if (dbgFile) {
+                        fprintf(dbgFile, "Trying: %s\n", fallbackFonts[i]);
+                        fflush(dbgFile);
+                    }
+
                     FT_Error err = FT_New_Face(g_fallbackFTLib, fallbackFonts[i], 0, &g_fallbackFace);
                     if (err == 0)
                     {
+                        if (dbgFile) {
+                            fprintf(dbgFile, "SUCCESS! Loaded: %s\n", fallbackFonts[i]);
+                            fprintf(dbgFile, "Face family: %s, style: %s\n",
+                                g_fallbackFace->family_name ? g_fallbackFace->family_name : "(null)",
+                                g_fallbackFace->style_name ? g_fallbackFace->style_name : "(null)");
+                            fprintf(dbgFile, "num_charmaps: %d\n", g_fallbackFace->num_charmaps);
+                            fflush(dbgFile);
+                        }
+
                         // Başarılı - Unicode charmap seç
                         for (int cm = 0; cm < g_fallbackFace->num_charmaps; ++cm)
                         {
                             if (g_fallbackFace->charmaps[cm]->encoding == FT_ENCODING_UNICODE)
                             {
                                 FT_Set_Charmap(g_fallbackFace, g_fallbackFace->charmaps[cm]);
+                                if (dbgFile) {
+                                    fprintf(dbgFile, "Unicode charmap selected (index %d)\n", cm);
+                                    fflush(dbgFile);
+                                }
                                 break;
                             }
                         }
                         break;
                     }
+                    else
+                    {
+                        if (dbgFile) {
+                            fprintf(dbgFile, "FAILED with error: %d\n", err);
+                            fflush(dbgFile);
+                        }
+                    }
                 }
+            }
+            else
+            {
+                if (dbgFile) {
+                    fprintf(dbgFile, "FreeType init FAILED\n");
+                    fflush(dbgFile);
+                }
+            }
+
+            if (dbgFile) {
+                fprintf(dbgFile, "Final g_fallbackFace: %p\n", (void*)g_fallbackFace);
+                fclose(dbgFile);
             }
         }
         return g_fallbackFace;
@@ -289,7 +338,65 @@ namespace pdf
         return output;
     }
 
+    bool PdfPainter::getDownsampledBufferDirect(uint8_t* outBuffer, int outBufferSize) const
+    {
+        const int required = _finalW * _finalH * 4;
+        if (!outBuffer || outBufferSize < required) return false;
 
+        if (_ssaa <= 1)
+        {
+            if ((int)_buffer.size() < required) return false;
+            std::memcpy(outBuffer, _buffer.data(), required);
+            return true;
+        }
+
+        // Bilinear downsampling directly into outBuffer
+        for (int y = 0; y < _finalH; ++y)
+        {
+            for (int x = 0; x < _finalW; ++x)
+            {
+                float centerX = (x + 0.5f) * _ssaa;
+                float centerY = (y + 0.5f) * _ssaa;
+
+                float rSum = 0, gSum = 0, bSum = 0, aSum = 0;
+                float weightSum = 0;
+
+                for (int dy = 0; dy < _ssaa; ++dy)
+                {
+                    for (int dx = 0; dx < _ssaa; ++dx)
+                    {
+                        int sx = x * _ssaa + dx;
+                        int sy = y * _ssaa + dy;
+                        if (sx >= _w || sy >= _h) continue;
+
+                        float distX = (sx + 0.5f) - centerX;
+                        float distY = (sy + 0.5f) - centerY;
+                        float distSq = distX * distX + distY * distY;
+                        float sigma = _ssaa * 0.5f;
+                        float weight = std::exp(-distSq / (2.0f * sigma * sigma));
+
+                        size_t si = (size_t(sy) * _w + sx) * 4;
+                        bSum += _buffer[si + 0] * weight;
+                        gSum += _buffer[si + 1] * weight;
+                        rSum += _buffer[si + 2] * weight;
+                        aSum += _buffer[si + 3] * weight;
+                        weightSum += weight;
+                    }
+                }
+
+                if (weightSum > 0)
+                {
+                    size_t di = (size_t(y) * _finalW + x) * 4;
+                    outBuffer[di + 0] = (uint8_t)std::clamp((int)(bSum / weightSum), 0, 255);
+                    outBuffer[di + 1] = (uint8_t)std::clamp((int)(gSum / weightSum), 0, 255);
+                    outBuffer[di + 2] = (uint8_t)std::clamp((int)(rSum / weightSum), 0, 255);
+                    outBuffer[di + 3] = (uint8_t)std::clamp((int)(aSum / weightSum), 0, 255);
+                }
+            }
+        }
+
+        return true;
+    }
 
 
     static void flattenCubicBezierDeviceD(
@@ -554,6 +661,32 @@ namespace pdf
         double textAngle
     )
     {
+        // DEBUG: Her text çağrısını logla
+        {
+            static FILE* dbgFile = nullptr;
+            if (!dbgFile) {
+                dbgFile = fopen("C:\\temp\\text_debug.txt", "w");
+            }
+            if (dbgFile) {
+                fprintf(dbgFile, "=== drawTextFreeTypeRaw ===\n");
+                fprintf(dbgFile, "Font: %s, encoding: %s\n",
+                    font ? font->baseFont.c_str() : "(null)",
+                    font ? font->encoding.c_str() : "(null)");
+                fprintf(dbgFile, "isCidFont: %d, hasSimpleMap: %d\n",
+                    (font && font->isCidFont) ? 1 : 0,
+                    (font && font->hasSimpleMap) ? 1 : 0);
+                fprintf(dbgFile, "ftReady: %d, ftFace: %p\n",
+                    (font && font->ftReady) ? 1 : 0,
+                    font ? (void*)font->ftFace : nullptr);
+                fprintf(dbgFile, "Raw bytes (%zu): ", raw.size());
+                for (size_t i = 0; i < raw.size() && i < 50; i++) {
+                    fprintf(dbgFile, "%02X ", (unsigned char)raw[i]);
+                }
+                fprintf(dbgFile, "\n");
+                fflush(dbgFile);
+            }
+        }
+
         // Type3 font: use width table only for advance, skip FreeType rendering
         // (CPU painter renders Type3 glyphs via CharProc content streams when called from GPU path)
         if (font && font->isType3) {
@@ -655,8 +788,65 @@ namespace pdf
 
         const bool cidMode = isCidFontActivePainter(font);
 
+        // DEBUG: cidMode kontrolü
+        {
+            static FILE* dbgFile = nullptr;
+            if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\text_debug.txt", "a");
+            if (dbgFile) {
+                fprintf(dbgFile, "=== FONT DEBUG ===\n");
+                fprintf(dbgFile, "baseFont='%s'\n", font->baseFont.c_str());
+                fprintf(dbgFile, "encoding='%s'\n", font->encoding.c_str());
+                fprintf(dbgFile, "isCidFont=%d\n", font->isCidFont ? 1 : 0);
+                fprintf(dbgFile, "cidMode=%d\n", cidMode ? 1 : 0);
+                fprintf(dbgFile, "fontProgram.size=%zu\n", font->fontProgram.size());
+                fprintf(dbgFile, "cidToUnicode.size=%zu\n", font->cidToUnicode.size());
+                fprintf(dbgFile, "hasCidToGidMap=%d, cidToGidIdentity=%d\n",
+                    font->hasCidToGidMap ? 1 : 0, font->cidToGidIdentity ? 1 : 0);
+                fprintf(dbgFile, "raw.size=%zu, raw(hex): ", raw.size());
+                for (size_t ii = 0; ii < raw.size() && ii < 40; ii++) {
+                    fprintf(dbgFile, "%02X ", (unsigned char)raw[ii]);
+                }
+                fprintf(dbgFile, "\n");
+                fflush(dbgFile);
+                fprintf(dbgFile, "cidMode=%d, fontProgram.size=%zu, encoding='%s'\n",
+                    cidMode ? 1 : 0, font->fontProgram.size(), font->encoding.c_str());
+                fprintf(dbgFile, "Entering loop, raw.size=%zu\n", raw.size());
+                fflush(dbgFile);
+            }
+        }
+
         if (cidMode)
         {
+            // DEBUG: CID branch'a girdik
+            {
+                static FILE* dbgFile = nullptr;
+                if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\text_debug.txt", "a");
+                if (dbgFile) {
+                    fprintf(dbgFile, "CID branch entered\n");
+                    fflush(dbgFile);
+                }
+            }
+
+            // DEBUG: CID font bilgilerini logla
+            {
+                static FILE* cidDbg = nullptr;
+                static bool firstTime = true;
+                if (firstTime) {
+                    cidDbg = fopen("C:\\temp\\cid_debug.txt", "w");
+                    firstTime = false;
+                }
+                if (cidDbg) {
+                    fprintf(cidDbg, "=== CID Font Debug ===\n");
+                    fprintf(cidDbg, "fontName: %s\n", font->baseFont.c_str());
+                    fprintf(cidDbg, "fontProgram.empty: %d\n", font->fontProgram.empty() ? 1 : 0);
+                    fprintf(cidDbg, "cidToUnicode.size: %zu\n", font->cidToUnicode.size());
+                    fprintf(cidDbg, "hasCidToGidMap: %d\n", font->hasCidToGidMap ? 1 : 0);
+                    fprintf(cidDbg, "cidToGidIdentity: %d\n", font->cidToGidIdentity ? 1 : 0);
+                    fprintf(cidDbg, "raw.size: %zu\n", raw.size());
+                    fflush(cidDbg);
+                }
+            }
+
             for (size_t i = 0; i + 1 < raw.size(); i += 2)
             {
                 int cid = ((unsigned char)raw[i] << 8) | (unsigned char)raw[i + 1];
@@ -682,6 +872,17 @@ namespace pdf
                         else gid = (cid >= 0 && (size_t)cid < font->cidToGid.size()) ? (FT_UInt)font->cidToGid[cid] : (FT_UInt)cid;
                     }
                     else gid = (FT_UInt)cid;
+                }
+
+                // DEBUG: Her karakter icin log
+                {
+                    static FILE* cidDbg = fopen("C:\\temp\\cid_debug.txt", "a");
+                    if (cidDbg) {
+                        char ch = (unicodeVal >= 32 && unicodeVal < 127) ? (char)unicodeVal : '?';
+                        fprintf(cidDbg, "CID=0x%04X -> unicode=0x%04X ('%c') -> GID=%u, usedToUnicode=%d\n",
+                            cid, unicodeVal, ch, gid, usedToUnicode ? 1 : 0);
+                        fflush(cidDbg);
+                    }
                 }
 
                 auto [penX, penY] = setPenSubpixelTransform(penX26, penY26);
@@ -767,6 +968,16 @@ namespace pdf
         }
         else
         {
+            // DEBUG: else branch'a girdik
+            {
+                static FILE* dbgFile = nullptr;
+                if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\text_debug.txt", "a");
+                if (dbgFile) {
+                    fprintf(dbgFile, "ELSE branch entered (non-CID mode)\n");
+                    fflush(dbgFile);
+                }
+            }
+
             for (unsigned char c : raw)
             {
                 int code = (int)c;
@@ -836,6 +1047,24 @@ namespace pdf
                                 gi = FT_Get_Char_Index(face, (FT_ULong)code);
                             }
                         }
+
+                        // Symbolic TrueType cmap: 0xF000 + code (PDF spec)
+                        if (gi == 0) {
+                            for (int cm = 0; cm < face->num_charmaps && gi == 0; cm++) {
+                                FT_Set_Charmap(face, face->charmaps[cm]);
+                                gi = FT_Get_Char_Index(face, (FT_ULong)(0xF000 + code));
+                            }
+                        }
+                    }
+                }
+
+                // DEBUG: gi sonucunu logla
+                {
+                    static FILE* dbgFile = nullptr;
+                    if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\text_debug.txt", "a");
+                    if (dbgFile) {
+                        fprintf(dbgFile, ", gi=%u\n", gi);
+                        fflush(dbgFile);
                     }
                 }
 
@@ -848,7 +1077,27 @@ namespace pdf
                 // Embedded fontta glyph bulunamadıysa fallback font dene
                 if (gi == 0)
                 {
+                    // DEBUG LOG
+                    {
+                        static FILE* dbgFile = nullptr;
+                        if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\fallback_debug.txt", "w");
+                        if (dbgFile) {
+                            fprintf(dbgFile, "Glyph not found: code=%d (0x%02X), char='%c'\n", code, code, (code >= 32 && code < 127) ? code : '?');
+                            fflush(dbgFile);
+                        }
+                    }
+
                     FT_Face fallback = getFallbackFace();
+
+                    // DEBUG LOG
+                    {
+                        static FILE* dbgFile = nullptr;
+                        if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\fallback_debug.txt", "a");
+                        if (dbgFile) {
+                            fprintf(dbgFile, "  Fallback face: %p\n", (void*)fallback);
+                            fflush(dbgFile);
+                        }
+                    }
 
                     if (fallback)
                     {
@@ -862,6 +1111,16 @@ namespace pdf
                         }
                         fallbackUni = FixTurkish(fallbackUni);
 
+                        // DEBUG LOG
+                        {
+                            static FILE* dbgFile = nullptr;
+                            if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\fallback_debug.txt", "a");
+                            if (dbgFile) {
+                                fprintf(dbgFile, "  fallbackUni=0x%04X, hasSimpleMap=%d\n", fallbackUni, font->hasSimpleMap ? 1 : 0);
+                                fflush(dbgFile);
+                            }
+                        }
+
                         if (fallbackUni != 0)
                         {
                             // Fallback font'un boyutunu ayarla
@@ -869,6 +1128,16 @@ namespace pdf
                             FT_Set_Transform(fallback, &ftm, nullptr);
 
                             renderGi = FT_Get_Char_Index(fallback, (FT_ULong)fallbackUni);
+
+                            // DEBUG LOG
+                            {
+                                static FILE* dbgFile = nullptr;
+                                if (!dbgFile) dbgFile = nullptr; // fopen("C:\\temp\\fallback_debug.txt", "a");
+                                if (dbgFile) {
+                                    fprintf(dbgFile, "  renderGi from fallback=%u\n", renderGi);
+                                    fflush(dbgFile);
+                                }
+                            }
 
                             if (renderGi != 0)
                             {
@@ -879,6 +1148,18 @@ namespace pdf
                 }
 
                 double advPx = getAdvancePx(code);  // default: PDF width'ten
+
+                // ========== RENDER DEBUG ==========
+                static FILE* renderDebug = nullptr;
+                if (!renderDebug) {
+                    renderDebug = nullptr; // fopen("C:\\temp\\render_debug.txt", "w");
+                    if (renderDebug) {
+                        fprintf(renderDebug, "=== CHARACTER RENDER DEBUG ===\n");
+                        fprintf(renderDebug, "Format: code(hex) -> gid -> penX,penY -> char\n\n");
+                        fflush(renderDebug);
+                    }
+                }
+                // ========== END DEBUG ==========
 
                 // 🚀 GLYPH CACHE - Massive performance boost!
                 if (renderGi != 0)
@@ -922,6 +1203,28 @@ namespace pdf
                             gy = penY - (int)std::round(scaledBearingY);
                         }
 
+                        // ========== RENDER DEBUG ==========
+                        if (renderDebug) {
+                            uint32_t uniForLog = 0;
+                            if (font->hasSimpleMap && font->codeToUnicode[c] != 0) {
+                                uniForLog = font->codeToUnicode[c];
+                            }
+                            else {
+                                uniForLog = WinAnsi[c];
+                            }
+                            char displayChar = '?';
+                            if (uniForLog >= 32 && uniForLog < 127) {
+                                displayChar = (char)uniForLog;
+                            }
+                            else if (code >= 32 && code < 127) {
+                                displayChar = (char)code;
+                            }
+                            fprintf(renderDebug, "DRAW: code=%3d(0x%02X) gid=%3u pos=(%4d,%4d) adv=%.1f uni=0x%04X char='%c'\n",
+                                code, code, renderGi, gx, gy, advPx, uniForLog, displayChar);
+                            fflush(renderDebug);
+                        }
+                        // ========== END DEBUG ==========
+
                         double scaleCorrX = scaleCorrection * horzCompress;  // X: with compression
                         double scaleCorrY = scaleCorrection;                 // Y: no compression
                         int drawW = std::max(1, (int)std::round(cached->width * scaleCorrX));
@@ -942,6 +1245,20 @@ namespace pdf
                         }
                     }
                 }
+                else if (renderDebug) {
+                    // Glyph bulunamadı
+                    uint32_t uniForLog = 0;
+                    if (font->hasSimpleMap && font->codeToUnicode[c] != 0) {
+                        uniForLog = font->codeToUnicode[c];
+                    }
+                    else {
+                        uniForLog = WinAnsi[c];
+                    }
+                    fprintf(renderDebug, "SKIP: code=%3d(0x%02X) gid=%3u (glyph not found or load failed) uni=0x%04X\n",
+                        code, code, renderGi, uniForLog);
+                    fflush(renderDebug);
+                }
+
                 if (hasTextRotation) {
                     penX26 += (FT_Pos)std::llround(advPx * cosA * 64.0);
                     penY26 -= (FT_Pos)std::llround(advPx * sinA * 64.0);
@@ -1284,6 +1601,33 @@ namespace pdf
                 }
 
                 // Write BGRA
+                // DEBUG: Detect image overwriting colored pixels  
+                {
+                    static FILE* imgOverwriteDebug = nullptr;
+                    static int imgOverwriteCount = 0;
+                    static bool imgOverwriteInit = false;
+                    if (!imgOverwriteInit) {
+                        char tempPath[MAX_PATH];
+                        GetTempPathA(MAX_PATH, tempPath);
+                        strcat_s(tempPath, "img_overwrite_debug.txt");
+                        imgOverwriteDebug = fopen(tempPath, "w");
+                        imgOverwriteInit = true;
+                    }
+
+                    bool isRightEdge = (px > 1100 && px < 1200);
+                    bool isMiddleY = (py > 300 && py < 600);
+                    uint8_t oldB = _buffer[di + 0];
+                    uint8_t oldG = _buffer[di + 1];
+                    uint8_t oldR = _buffer[di + 2];
+                    bool oldIsColored = !(oldB == 255 && oldG == 255 && oldR == 255);
+
+                    if (imgOverwriteDebug && isRightEdge && isMiddleY && oldIsColored && imgOverwriteCount < 100) {
+                        fprintf(imgOverwriteDebug, "*** IMAGE OVERWRITE *** (%d, %d): RGB(%d,%d,%d) -> RGB(%d,%d,%d)\n",
+                            px, py, oldR, oldG, oldB, srcR, srcG, srcB);
+                        imgOverwriteCount++;
+                        fflush(imgOverwriteDebug);
+                    }
+                }
                 _buffer[di + 0] = srcB;
                 _buffer[di + 1] = srcG;
                 _buffer[di + 2] = srcR;
@@ -1774,7 +2118,44 @@ namespace pdf
         if ((unsigned)x >= (unsigned)_w || (unsigned)y >= (unsigned)_h)
             return;
 
+        // DEBUG: Log pixels in right edge middle area - detect overwrites
+        static FILE* pixelDebug = nullptr;
+        static int pixelLogCount = 0;
+        static bool pixelDebugInit = false;
+        if (!pixelDebugInit) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "pixel_debug.txt");
+            pixelDebug = fopen(tempPath, "w");
+            pixelDebugInit = true;
+        }
+
         uint8_t* p = &_buffer[(y * _w + x) * 4];
+
+        // Log only specific area
+        bool isRightEdge = (x > 1100 && x < 1200);
+        bool isMiddleY = (y > 400 && y < 500);
+
+        // Check current pixel color before writing
+        bool oldIsWhite = (p[0] == 255 && p[1] == 255 && p[2] == 255);
+        bool newIsWhite = ((argb & 0x00FFFFFF) == 0x00FFFFFF);
+
+        if (pixelDebug && isRightEdge && isMiddleY) {
+            // Log if overwriting colored pixel with white
+            if (!oldIsWhite && newIsWhite && pixelLogCount < 200) {
+                uint32_t oldColor = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];
+                fprintf(pixelDebug, "*** OVERWRITE *** (%d, %d): 0x%08X -> 0x%08X (colored -> white!)\n",
+                    x, y, oldColor, argb);
+                pixelLogCount++;
+                fflush(pixelDebug);
+            }
+            // Log first few colored pixels
+            else if (!newIsWhite && pixelLogCount < 50) {
+                fprintf(pixelDebug, "putPixel(%d, %d, 0x%08X)\n", x, y, argb);
+                pixelLogCount++;
+                fflush(pixelDebug);
+            }
+        }
 
         // argb = 0xAARRGGBB
         uint8_t a = (argb >> 24) & 0xFF;
@@ -2151,6 +2532,62 @@ namespace pdf
         const PdfMatrix* clipCTM,
         bool clipEvenOdd)
     {
+        // ========== DEBUG LOG ==========
+        static FILE* debugFile = nullptr;
+        static int callCount = 0;
+        if (!debugFile) {
+            // TEMP klasörüne yaz (C:\ yerine)
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "bezier_debug.txt");
+            debugFile = fopen(tempPath, "w");
+            if (debugFile) {
+                fprintf(debugFile, "=== BEZIER DEBUG LOG ===\n");
+                fprintf(debugFile, "Log file: %s\n", tempPath);
+                fflush(debugFile);
+            }
+        }
+        callCount++;
+
+        int curveCount = 0;
+        int lineCount = 0;
+        int moveCount = 0;
+        for (const auto& seg : path) {
+            if (seg.type == PdfPathSegment::CurveTo) curveCount++;
+            else if (seg.type == PdfPathSegment::LineTo) lineCount++;
+            else if (seg.type == PdfPathSegment::MoveTo) moveCount++;
+        }
+
+        if (debugFile) {
+            fprintf(debugFile, "\n[fillPath #%d] path.size=%zu, moves=%d, lines=%d, CURVES=%d\n",
+                callCount, path.size(), moveCount, lineCount, curveCount);
+            fprintf(debugFile, "  CTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
+            fprintf(debugFile, "  color=0x%08X, evenOdd=%d\n", color, evenOdd ? 1 : 0);
+            fprintf(debugFile, "  _scaleX=%.4f, _scaleY=%.4f, _w=%d, _h=%d\n", _scaleX, _scaleY, _w, _h);
+
+            // PATH KOORDİNATLARI (ilk 10 segment)
+            int segIdx = 0;
+            for (const auto& seg : path) {
+                if (segIdx >= 10) {
+                    fprintf(debugFile, "  ... (%zu more segments)\n", path.size() - 10);
+                    break;
+                }
+                if (seg.type == PdfPathSegment::MoveTo)
+                    fprintf(debugFile, "  [%d] MOVE (%.4f, %.4f)\n", segIdx, seg.x, seg.y);
+                else if (seg.type == PdfPathSegment::LineTo)
+                    fprintf(debugFile, "  [%d] LINE (%.4f, %.4f)\n", segIdx, seg.x, seg.y);
+                else if (seg.type == PdfPathSegment::CurveTo)
+                    fprintf(debugFile, "  [%d] CURVE c1(%.2f,%.2f) c2(%.2f,%.2f) end(%.2f,%.2f)\n",
+                        segIdx, seg.x1, seg.y1, seg.x2, seg.y2, seg.x3, seg.y3);
+                else if (seg.type == PdfPathSegment::Close)
+                    fprintf(debugFile, "  [%d] CLOSE\n", segIdx);
+                segIdx++;
+            }
+            fflush(debugFile);
+        }
+        // ========== END DEBUG ==========
+
         // === POLYGONLARI DOUBLE OLARAK TUT ===
         std::vector<std::vector<DPoint>> polys;
         std::vector<DPoint> cur;
@@ -2169,6 +2606,22 @@ namespace pdf
                 dx *= _scaleX;
                 dy = mapY(dy * _scaleY);
                 applyRotate(dx, dy);
+            };
+
+        // DEBUG: Transform sonuçlarını logla (sadece ilk birkaç fill için)
+        auto userToDeviceDebug = [&](double ux, double uy, double& dx, double& dy, bool logIt)
+            {
+                double afterCTM_x, afterCTM_y;
+                ApplyMatrix(ctm, ux, uy, afterCTM_x, afterCTM_y);
+                dx = afterCTM_x * _scaleX;
+                double beforeMapY = afterCTM_y * _scaleY;
+                dy = mapY(beforeMapY);
+                applyRotate(dx, dy);
+
+                if (logIt && debugFile && callCount <= 20) {
+                    fprintf(debugFile, "    TRANSFORM: user(%.2f,%.2f) -> ctm(%.2f,%.2f) -> scale(%.2f,%.2f) -> mapY(%.2f) -> device(%.2f,%.2f)\n",
+                        ux, uy, afterCTM_x, afterCTM_y, dx, beforeMapY, dy, dx, dy);
+                }
             };
 
         auto flush = [&]()
@@ -2231,6 +2684,10 @@ namespace pdf
                 userToDevice(seg.x2, seg.y2, x2d, y2d);
                 userToDevice(seg.x3, seg.y3, x3d, y3d);
 
+                // ========== DEBUG: Bezier bilgisi ==========
+                size_t beforeSize = cur.size();
+                // ========== END DEBUG ==========
+
                 // Başlangıç noktası (duplicate olmasın)
                 addPointUniqueD(cur, x0d, y0d);
 
@@ -2243,6 +2700,18 @@ namespace pdf
                     cur,
                     tolPxSq
                 );
+
+                // ========== DEBUG: Flatten sonucu ==========
+                if (debugFile && curveCount > 0 && curveCount <= 20) {
+                    fprintf(debugFile, "  CURVE: user(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)\n",
+                        curUx, curUy, seg.x1, seg.y1, seg.x2, seg.y2, seg.x3, seg.y3);
+                    fprintf(debugFile, "         dev (%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)\n",
+                        x0d, y0d, x1d, y1d, x2d, y2d, x3d, y3d);
+                    fprintf(debugFile, "         flatten: %zu -> %zu points (+%zu)\n",
+                        beforeSize, cur.size(), cur.size() - beforeSize);
+                    fflush(debugFile);
+                }
+                // ========== END DEBUG ==========
 
                 curUx = seg.x3;
                 curUy = seg.y3;
@@ -2261,6 +2730,21 @@ namespace pdf
 
         flush();
         if (polys.empty()) return;
+
+        // ========== DEBUG: POLYGON KOORDİNATLARI ==========
+        if (debugFile && callCount >= 2160 && callCount <= 2170) {
+            fprintf(debugFile, "  POLYGONS (count=%zu):\n", polys.size());
+            for (size_t pi = 0; pi < polys.size(); pi++) {
+                fprintf(debugFile, "    poly[%zu] (%zu pts): ", pi, polys[pi].size());
+                for (size_t vi = 0; vi < polys[pi].size() && vi < 6; vi++) {
+                    fprintf(debugFile, "(%.2f,%.2f) ", polys[pi][vi].x, polys[pi][vi].y);
+                }
+                if (polys[pi].size() > 6) fprintf(debugFile, "...");
+                fprintf(debugFile, "\n");
+            }
+            fflush(debugFile);
+        }
+        // ========== END DEBUG ==========
 
         // === DOUBLE → INT POLYGON DÖNÜŞÜMÜ ===
         std::vector<std::vector<IPoint>> ipolys;
@@ -2295,6 +2779,14 @@ namespace pdf
 
         if (hasClip) {
             pathToPolygons(*clipPath, *clipCTM, _scaleX, _scaleY, _h, clipPolys);
+
+            if (debugFile && callCount >= 2160 && callCount <= 2170) {
+                fprintf(debugFile, "  CLIPPING: %zu polygons\n", clipPolys.size());
+                for (size_t i = 0; i < clipPolys.size() && i < 3; i++) {
+                    fprintf(debugFile, "    clip[%zu]: %zu points\n", i, clipPolys[i].size());
+                }
+                fflush(debugFile);
+            }
         }
 
         minY = clampi(minY, 0, _h - 1);
@@ -2668,6 +3160,19 @@ namespace pdf
             xmax = std::max(xmax, p.x);
         }
 
+        // DEBUG FILE
+        static FILE* fillDebug = nullptr;
+        static bool fillDebugInit = false;
+        static int fillCallCount = 0;
+        if (!fillDebugInit) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "fill_debug.txt");
+            fillDebug = fopen(tempPath, "w");
+            fillDebugInit = true;
+        }
+        fillCallCount++;
+
         struct Edge
         {
             int y0, y1;
@@ -2694,6 +3199,28 @@ namespace pdf
             edges.push_back(e);
         }
 
+        // DEBUG: Log edges with X > 1200 (right side)
+        if (fillDebug) {
+            fprintf(fillDebug, "\n=== rasterFillPolygon #%d ===\n", fillCallCount);
+            fprintf(fillDebug, "Bounds: (%d,%d)-(%d,%d), color=0x%08X\n", xmin, ymin, xmax, ymax, color);
+            fprintf(fillDebug, "Total edges: %zu\n", edges.size());
+
+            // Count and log right-side edges
+            int rightEdgeCount = 0;
+            for (size_t i = 0; i < edges.size(); i++) {
+                double edgeMaxX = std::max(edges[i].x, edges[i].x + edges[i].dx * (edges[i].y1 - edges[i].y0));
+                if (edgeMaxX > 1200) {
+                    fprintf(fillDebug, "  Edge[%zu]: y=%d-%d, x=%.1f, dx=%.4f, w=%d (RIGHT SIDE)\n",
+                        i, edges[i].y0, edges[i].y1, edges[i].x, edges[i].dx, edges[i].winding);
+                    rightEdgeCount++;
+                }
+            }
+            fprintf(fillDebug, "Right-side edges (X>1200): %d\n", rightEdgeCount);
+            fflush(fillDebug);
+        }
+
+        int rightPixelCount = 0;
+
         for (int y = ymin; y < ymax; ++y)
         {
             struct Hit { double x; int w; };
@@ -2718,6 +3245,7 @@ namespace pdf
                     int x1 = (int)std::floor(hits[i + 1].x);
                     for (int x = x0; x <= x1; ++x) {
                         putPixel(x, y, color);
+                        if (x > 1200) rightPixelCount++;
                     }
                 }
             }
@@ -2737,12 +3265,18 @@ namespace pdf
                         int x1 = (int)std::floor(h.x);
                         for (int x = x0; x <= x1; ++x) {
                             putPixel(x, y, color);
+                            if (x > 1200) rightPixelCount++;
                         }
                     }
                 }
             }
         }
 
+        // DEBUG: Log right pixel count
+        if (fillDebug) {
+            fprintf(fillDebug, "Pixels drawn with X > 1200: %d\n", rightPixelCount);
+            fflush(fillDebug);
+        }
     }
     // ---------------------------------------------------------
     // STROKE SUBPATH (PROFESSIONAL - ROUND JOINS & CAPS)
@@ -2756,13 +3290,64 @@ namespace pdf
         int lineCap,
         double miterLimit)
     {
+        // DEBUG: Comprehensive subpath logging
+        static FILE* subpathDebug = nullptr;
+        static int subpathCount = 0;
+        if (!subpathDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "subpath_debug.txt");
+            subpathDebug = fopen(tempPath, "w");
+        }
+        subpathCount++;
+
+        // Log input
+        if (subpathDebug) {
+            fprintf(subpathDebug, "\n=== strokeSubpath #%d ===\n", subpathCount);
+            fprintf(subpathDebug, "Input: pts.size=%zu, closed=%d, color=0x%08X, lw=%.2f\n",
+                pts.size(), closed ? 1 : 0, color, lineWidthPx);
+
+            // Find right edge points in input (X > 1200)
+            fprintf(subpathDebug, "Input pts with X > 1200:\n");
+            for (size_t i = 0; i < pts.size(); i++) {
+                if (pts[i].x > 1200) {
+                    fprintf(subpathDebug, "  pts[%zu] = (%.2f, %.2f)\n", i, pts[i].x, pts[i].y);
+                }
+            }
+            fflush(subpathDebug);
+        }
+
+        // Check bounds for right edge middle
+        bool isRightEdge = false;
+        bool isMiddleY = false;
+        if (pts.size() >= 1) {
+            double minX = pts[0].x, maxX = pts[0].x;
+            double minY = pts[0].y, maxY = pts[0].y;
+            for (const auto& p : pts) {
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+            }
+            isRightEdge = (maxX > 1100);
+            isMiddleY = (minY > 300 && maxY < 600);
+        }
+
         if (pts.size() < 2) {
+            if (subpathDebug && isRightEdge && isMiddleY) {
+                fprintf(subpathDebug, "[Subpath #%d] SKIPPED: pts.size()=%zu < 2\n", subpathCount, pts.size());
+                fflush(subpathDebug);
+            }
             return;
         }
         if (miterLimit <= 0) miterLimit = 10.0;
 
         const double hw = lineWidthPx * 0.5;
         if (hw <= 0.0) {
+            if (subpathDebug && isRightEdge && isMiddleY) {
+                fprintf(subpathDebug, "[Subpath #%d] SKIPPED: hw=%.4f <= 0\n", subpathCount, hw);
+                fflush(subpathDebug);
+            }
             return;
         }
 
@@ -2812,6 +3397,22 @@ namespace pdf
             double nx, ny;
             leftNormal2(dx, dy, nx, ny);
             segs[i] = { {dx, dy}, {nx, ny}, L };
+        }
+
+        // DEBUG: Log segments with endpoints on right edge (X > 1200)
+        if (subpathDebug) {
+            fprintf(subpathDebug, "P.size=%zu, segN=%zu\n", P.size(), segN);
+            fprintf(subpathDebug, "Segments with right edge endpoints (X > 1200):\n");
+            for (size_t i = 0; i < segN; ++i) {
+                bool p0Right = (P[i].x > 1200);
+                bool p1Right = (P[i + 1].x > 1200);
+                if (p0Right || p1Right) {
+                    fprintf(subpathDebug, "  seg[%zu]: (%.1f,%.1f)->(%.1f,%.1f), len=%.1f, d=(%.3f,%.3f), n=(%.3f,%.3f)\n",
+                        i, P[i].x, P[i].y, P[i + 1].x, P[i + 1].y, segs[i].len,
+                        segs[i].d.x, segs[i].d.y, segs[i].n.x, segs[i].n.y);
+                }
+            }
+            fflush(subpathDebug);
         }
 
         std::vector<DPoint> leftC;
@@ -3016,6 +3617,37 @@ namespace pdf
             }
         }
 
+        // DEBUG: Log leftC and rightC right edge points
+        if (subpathDebug) {
+            fprintf(subpathDebug, "leftC.size=%zu, rightC.size=%zu\n", leftC.size(), rightC.size());
+
+            // Find consecutive right edge points in leftC
+            fprintf(subpathDebug, "leftC points with X > 1200:\n");
+            for (size_t i = 0; i < leftC.size(); i++) {
+                if (leftC[i].x > 1200) {
+                    fprintf(subpathDebug, "  leftC[%zu] = (%.1f, %.1f)\n", i, leftC[i].x, leftC[i].y);
+                }
+            }
+
+            // Check for missing right edge segment
+            fprintf(subpathDebug, "Checking for right edge vertical segment in leftC:\n");
+            bool foundRightVertical = false;
+            for (size_t i = 0; i + 1 < leftC.size(); i++) {
+                if (leftC[i].x > 1200 && leftC[i + 1].x > 1200) {
+                    double dy = std::abs(leftC[i + 1].y - leftC[i].y);
+                    if (dy > 100) {  // Long vertical segment
+                        fprintf(subpathDebug, "  FOUND: leftC[%zu]->[%zu]: (%.1f,%.1f)->(%.1f,%.1f), dy=%.1f\n",
+                            i, i + 1, leftC[i].x, leftC[i].y, leftC[i + 1].x, leftC[i + 1].y, dy);
+                        foundRightVertical = true;
+                    }
+                }
+            }
+            if (!foundRightVertical) {
+                fprintf(subpathDebug, "  *** NO LONG VERTICAL SEGMENT ON RIGHT EDGE! ***\n");
+            }
+            fflush(subpathDebug);
+        }
+
         // Final outline
         std::vector<DPoint> outline;
         outline.reserve(leftC.size() + rightC.size() + capEnd.size() + capStart.size() + 8);
@@ -3035,6 +3667,11 @@ namespace pdf
         }
 
         if (outline.size() < 3) {
+            if (subpathDebug && isRightEdge && isMiddleY) {
+                fprintf(subpathDebug, "[Subpath #%d] SKIPPED: outline.size()=%zu < 3, pts.size()=%zu\n",
+                    subpathCount, outline.size(), pts.size());
+                fflush(subpathDebug);
+            }
             return;
         }
 
@@ -3043,6 +3680,59 @@ namespace pdf
         poly.reserve(outline.size());
         for (auto& p : outline)
             poly.push_back({ (int)std::lround(p.x), (int)std::lround(p.y) });
+
+        // DEBUG: Check if this is right edge middle area
+        static FILE* rasterDebug = nullptr;
+        static int rasterCount = 0;
+        if (!rasterDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "raster_debug.txt");
+            rasterDebug = fopen(tempPath, "w");
+        }
+        rasterCount++;
+
+        // Find bounds
+        int minX = poly[0].x, maxX = poly[0].x;
+        int minY = poly[0].y, maxY = poly[0].y;
+        for (const auto& p : poly) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+
+        // Log ALL polygons for debugging
+        if (rasterDebug) {
+            fprintf(rasterDebug, "[Polygon #%d] size=%zu, bounds=(%d,%d)-(%d,%d), color=0x%08X\n",
+                rasterCount, poly.size(), minX, minY, maxX, maxY, color);
+            fprintf(rasterDebug, "  Buffer: _w=%d, _h=%d\n", _w, _h);
+            fprintf(rasterDebug, "  leftC.size=%zu, rightC.size=%zu\n", leftC.size(), rightC.size());
+
+            // Log RIGHT EDGE points (X > 1200)
+            fprintf(rasterDebug, "  RIGHT EDGE POINTS (X > 1200):\n");
+            int rightCount = 0;
+            for (size_t i = 0; i < poly.size(); i++) {
+                if (poly[i].x > 1200) {
+                    fprintf(rasterDebug, "    poly[%zu] = (%d, %d)\n", i, poly[i].x, poly[i].y);
+                    rightCount++;
+                }
+            }
+            fprintf(rasterDebug, "  Total right edge points: %d\n", rightCount);
+
+            // Check if right edge has full Y range
+            int rightMinY = 99999, rightMaxY = -99999;
+            for (size_t i = 0; i < poly.size(); i++) {
+                if (poly[i].x > 1200) {
+                    if (poly[i].y < rightMinY) rightMinY = poly[i].y;
+                    if (poly[i].y > rightMaxY) rightMaxY = poly[i].y;
+                }
+            }
+            fprintf(rasterDebug, "  Right edge Y range: %d - %d (expected ~88 - ~832)\n", rightMinY, rightMaxY);
+
+            fprintf(rasterDebug, "\n");
+            fflush(rasterDebug);
+        }
 
         this->rasterFillPolygon(poly, color, false);
 
@@ -3064,6 +3754,39 @@ namespace pdf
         // (Non-uniform scale varsa istersen max(_scaleX,_scaleY) kullanabilirsin.)
         LogDebug("PdfPainter::strokePath called - %zu segments, lw=%.2f, color=0x%08X",
             path.size(), lineWidth, color);
+
+        // ========== STROKE DEBUG ==========
+        static FILE* strokeDebug = nullptr;
+        static int strokeCount = 0;
+        if (!strokeDebug) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "stroke_debug.txt");
+            strokeDebug = fopen(tempPath, "w");
+            if (strokeDebug) {
+                fprintf(strokeDebug, "=== STROKE PATH DEBUG ===\n");
+                fprintf(strokeDebug, "_w=%d, _h=%d, _scaleX=%.4f, _scaleY=%.4f, _hasRotate=%d\n\n",
+                    _w, _h, _scaleX, _scaleY, _hasRotate ? 1 : 0);
+                fflush(strokeDebug);
+            }
+        }
+        strokeCount++;
+
+        // Log CTM for first strokes
+        if (strokeDebug && strokeCount <= 20) {
+            fprintf(strokeDebug, "\n=== Stroke #%d ===\n", strokeCount);
+            fprintf(strokeDebug, "CTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f);
+            fprintf(strokeDebug, "lineWidth=%.2f, color=0x%08X, segments=%zu\n",
+                lineWidth, color, path.size());
+
+            // Log first point
+            if (!path.empty()) {
+                fprintf(strokeDebug, "First point: (%.2f, %.2f)\n", path[0].x, path[0].y);
+            }
+            fflush(strokeDebug);
+        }
+
 
         // ✅ Eğer path boşsa
         if (path.empty())
@@ -3098,6 +3821,48 @@ namespace pdf
         auto flush = [&]()
             {
                 if (pts.size() >= 2) {
+                    // DEBUG: Log path bounds
+                    if (strokeDebug) {
+                        double minX = pts[0].x, maxX = pts[0].x;
+                        double minY = pts[0].y, maxY = pts[0].y;
+                        for (const auto& p : pts) {
+                            if (p.x < minX) minX = p.x;
+                            if (p.x > maxX) maxX = p.x;
+                            if (p.y < minY) minY = p.y;
+                            if (p.y > maxY) maxY = p.y;
+                        }
+
+                        // HER STROKE ICIN DETAYLI LOG
+                        fprintf(strokeDebug, "[Stroke #%d] pts=%zu, color=0x%08X, lw=%.2f\n",
+                            strokeCount, pts.size(), color, lwPx);
+                        fprintf(strokeDebug, "  Device bounds: (%.1f,%.1f)-(%.1f,%.1f)\n",
+                            minX, minY, maxX, maxY);
+                        fprintf(strokeDebug, "  Buffer size: _w=%d, _h=%d\n", _w, _h);
+
+                        // Check if any part is out of bounds
+                        bool partiallyOut = (minX < 0 || maxX >= _w || minY < 0 || maxY >= _h);
+                        bool completelyOut = (maxX < 0 || minX >= _w || maxY < 0 || minY >= _h);
+
+                        if (completelyOut) {
+                            fprintf(strokeDebug, "  *** COMPLETELY OUT OF BOUNDS! ***\n");
+                        }
+                        else if (partiallyOut) {
+                            fprintf(strokeDebug, "  ! Partially out of bounds (will be clipped)\n");
+                        }
+
+                        // Log first few points
+                        size_t logCount = (pts.size() < 5) ? pts.size() : 5;
+                        for (size_t i = 0; i < logCount; i++) {
+                            fprintf(strokeDebug, "    pt[%zu] = (%.2f, %.2f)\n", i, pts[i].x, pts[i].y);
+                        }
+                        if (pts.size() > 5) {
+                            fprintf(strokeDebug, "    ... (%zu more points)\n", pts.size() - 5);
+                            fprintf(strokeDebug, "    pt[%zu] = (%.2f, %.2f) (last)\n",
+                                pts.size() - 1, pts.back().x, pts.back().y);
+                        }
+                        fprintf(strokeDebug, "\n");
+                        fflush(strokeDebug);
+                    }
                     strokeSubpath(pts, closed, color, lwPx, lineJoin, lineCap, miterLimit);
                 }
 
@@ -3194,6 +3959,44 @@ namespace pdf
         const PdfMatrix& gradientCTM,
         bool evenOdd)
     {
+        // ========== DEBUG LOG ==========
+        static FILE* gradDebugFile = nullptr;
+        static int gradCallCount = 0;
+        if (!gradDebugFile) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "gradient_debug.txt");
+            gradDebugFile = fopen(tempPath, "w");
+            if (gradDebugFile) {
+                fprintf(gradDebugFile, "=== GRADIENT DEBUG LOG ===\n");
+                fprintf(gradDebugFile, "Log file: %s\n", tempPath);
+                fflush(gradDebugFile);
+            }
+        }
+        gradCallCount++;
+
+        int curveCount = 0;
+        int lineCount = 0;
+        int moveCount = 0;
+        for (const auto& seg : clipPath) {
+            if (seg.type == PdfPathSegment::CurveTo) curveCount++;
+            else if (seg.type == PdfPathSegment::LineTo) lineCount++;
+            else if (seg.type == PdfPathSegment::MoveTo) moveCount++;
+        }
+
+        if (gradDebugFile) {
+            fprintf(gradDebugFile, "\n[fillPathWithGradient #%d] path.size=%zu, moves=%d, lines=%d, CURVES=%d\n",
+                gradCallCount, clipPath.size(), moveCount, lineCount, curveCount);
+            fprintf(gradDebugFile, "  clipCTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                clipCTM.a, clipCTM.b, clipCTM.c, clipCTM.d, clipCTM.e, clipCTM.f);
+            fprintf(gradDebugFile, "  gradientCTM=[%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                gradientCTM.a, gradientCTM.b, gradientCTM.c, gradientCTM.d, gradientCTM.e, gradientCTM.f);
+            fprintf(gradDebugFile, "  gradient: (%.2f,%.2f) -> (%.2f,%.2f), %zu stops\n",
+                gradient.x0, gradient.y0, gradient.x1, gradient.y1, gradient.stops.size());
+            fflush(gradDebugFile);
+        }
+        // ========== END DEBUG ==========
+
         if (clipPath.empty() || gradient.stops.empty())
         {
             LogDebug("fillPathWithGradient: Empty path or stops");
@@ -3296,6 +4099,25 @@ namespace pdf
         double subStartX = 0, subStartY = 0;
         bool inSubpath = false;
 
+        // ========== DEBUG: Bezier flatten tracking ==========
+        static FILE* bezierDebugFile = nullptr;
+        static int bezierDebugCallCount = 0;
+        if (!bezierDebugFile) {
+            char tempPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, tempPath);
+            strcat_s(tempPath, "bezier_flatten_debug.txt");
+            bezierDebugFile = fopen(tempPath, "w");
+            if (bezierDebugFile) {
+                fprintf(bezierDebugFile, "=== BEZIER FLATTEN DEBUG ===\n");
+                fflush(bezierDebugFile);
+            }
+        }
+        bezierDebugCallCount++;
+
+        int totalCurves = 0;
+        int totalFlattenedPoints = 0;
+        // ========== END DEBUG SETUP ==========
+
         auto flushPoly = [&]() {
             if (currentPoly.size() >= 3)
             {
@@ -3363,6 +4185,7 @@ namespace pdf
                 const double tolPxSq = tolPx * tolPx;
 
                 // Başlangıç noktasını ekle (duplicate olmasın)
+                size_t pointsBefore = currentPoly.size();
                 if (currentPoly.empty() ||
                     std::abs(currentPoly.back().x - x0d) > 0.1 ||
                     std::abs(currentPoly.back().y - y0d) > 0.1)
@@ -3379,6 +4202,23 @@ namespace pdf
                     currentPoly,
                     tolPxSq
                 );
+
+                // ========== DEBUG: Bezier flatten result ==========
+                totalCurves++;
+                size_t pointsAfter = currentPoly.size();
+                int pointsAdded = (int)(pointsAfter - pointsBefore);
+                totalFlattenedPoints += pointsAdded;
+
+                if (bezierDebugFile && bezierDebugCallCount <= 20 && totalCurves <= 10) {
+                    fprintf(bezierDebugFile, "  Curve #%d: user(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)\n",
+                        totalCurves, cpx, cpy, seg.x1, seg.y1, seg.x2, seg.y2, seg.x3, seg.y3);
+                    fprintf(bezierDebugFile, "            device(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)->(%.2f,%.2f)\n",
+                        x0d, y0d, x1d, y1d, x2d, y2d, x3d, y3d);
+                    fprintf(bezierDebugFile, "            points: %zu -> %zu (+%d)\n",
+                        pointsBefore, pointsAfter, pointsAdded);
+                    fflush(bezierDebugFile);
+                }
+                // ========== END DEBUG ==========
 
                 cpx = seg.x3; cpy = seg.y3;
             }
@@ -3399,6 +4239,86 @@ namespace pdf
             }
         }
         flushPoly();
+
+        // ========== DEBUG: Özet bilgi ==========
+        if (bezierDebugFile && bezierDebugCallCount <= 50) {
+            int totalPolyPoints = 0;
+            for (const auto& poly : polygons) {
+                totalPolyPoints += (int)poly.size();
+            }
+            fprintf(bezierDebugFile, "\n[fillPathWithGradient #%d] SUMMARY:\n", bezierDebugCallCount);
+            fprintf(bezierDebugFile, "  Input: %zu path segments\n", clipPath.size());
+            fprintf(bezierDebugFile, "  Curves processed: %d\n", totalCurves);
+            fprintf(bezierDebugFile, "  Flattened points from curves: %d\n", totalFlattenedPoints);
+            fprintf(bezierDebugFile, "  Output polygons: %zu\n", polygons.size());
+            fprintf(bezierDebugFile, "  Total polygon points: %d\n", totalPolyPoints);
+            fprintf(bezierDebugFile, "  clipCTM: [%.4f %.4f %.4f %.4f %.4f %.4f]\n",
+                clipCTM.a, clipCTM.b, clipCTM.c, clipCTM.d, clipCTM.e, clipCTM.f);
+            fflush(bezierDebugFile);
+        }
+
+        // ========== DEBUG: İlk 4 polygon'u SVG olarak kaydet ==========
+        static int svgSaveCount = 0;
+        if (svgSaveCount < 4 && !polygons.empty() && totalCurves > 0) {
+            char svgPath[MAX_PATH];
+            GetTempPathA(MAX_PATH, svgPath);
+            char svgFilename[64];
+            sprintf(svgFilename, "polygon_debug_%d.svg", svgSaveCount);
+            strcat(svgPath, svgFilename);
+
+            FILE* svgFile = fopen(svgPath, "w");
+            if (svgFile) {
+                // SVG bounds hesapla
+                double minX = 1e30, maxX = -1e30, minY = 1e30, maxY = -1e30;
+                for (const auto& poly : polygons) {
+                    for (const auto& pt : poly) {
+                        minX = std::min(minX, pt.x);
+                        maxX = std::max(maxX, pt.x);
+                        minY = std::min(minY, pt.y);
+                        maxY = std::max(maxY, pt.y);
+                    }
+                }
+
+                double width = maxX - minX + 20;
+                double height = maxY - minY + 20;
+
+                fprintf(svgFile, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+                fprintf(svgFile, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%.0f\" height=\"%.0f\" viewBox=\"%.0f %.0f %.0f %.0f\">\n",
+                    width, height, minX - 10, minY - 10, width, height);
+                fprintf(svgFile, "  <rect x=\"%.0f\" y=\"%.0f\" width=\"%.0f\" height=\"%.0f\" fill=\"white\"/>\n",
+                    minX - 10, minY - 10, width, height);
+
+                // Her polygon'u çiz
+                int polyIdx = 0;
+                const char* colors[] = { "red", "green", "blue", "purple", "orange" };
+                for (const auto& poly : polygons) {
+                    if (poly.size() < 3) continue;
+
+                    fprintf(svgFile, "  <polygon points=\"");
+                    for (size_t i = 0; i < poly.size(); i++) {
+                        fprintf(svgFile, "%.2f,%.2f ", poly[i].x, poly[i].y);
+                    }
+                    fprintf(svgFile, "\" fill=\"none\" stroke=\"%s\" stroke-width=\"1\"/>\n",
+                        colors[polyIdx % 5]);
+
+                    // İlk ve son noktayı işaretle
+                    fprintf(svgFile, "  <circle cx=\"%.2f\" cy=\"%.2f\" r=\"3\" fill=\"%s\"/>\n",
+                        poly[0].x, poly[0].y, colors[polyIdx % 5]);
+
+                    polyIdx++;
+                }
+
+                fprintf(svgFile, "</svg>\n");
+                fclose(svgFile);
+
+                if (bezierDebugFile) {
+                    fprintf(bezierDebugFile, "  SVG saved to: %s\n", svgPath);
+                    fflush(bezierDebugFile);
+                }
+            }
+            svgSaveCount++;
+        }
+        // ========== END DEBUG ==========
 
         if (polygons.empty()) return;
 
@@ -3533,5 +4453,63 @@ namespace pdf
         fillPathWithGradient(path, gradient, ctm, ctm, evenOdd);
     }
 
+
+    // ==================== SMask Support ====================
+    void PdfPainter::pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH)
+    {
+        if (maskAlpha.empty() || maskW <= 0 || maskH <= 0) return;
+
+        // Mevcut buffer'ı kaydet (SMask öncesi durum)
+        _smaskSavedBuffer = _buffer;
+        _smaskAlpha = maskAlpha;
+        _smaskW = maskW;
+        _smaskH = maskH;
+        _hasSmask = true;
+    }
+
+    void PdfPainter::popSoftMask()
+    {
+        if (!_hasSmask) return;
+
+        // push ile pop arası çizilen her şeyi mask alpha ile modüle et:
+        // result = saved + (current - saved) * maskAlpha / 255
+        int bufW = _w;
+        int bufH = _h;
+
+        for (int y = 0; y < bufH; y++) {
+            // Buffer y → mask y (ölçekle, çünkü boyutlar farklı olabilir)
+            int my = (int)((double)y / bufH * _smaskH);
+            if (my >= _smaskH) my = _smaskH - 1;
+
+            for (int x = 0; x < bufW; x++) {
+                int mx = (int)((double)x / bufW * _smaskW);
+                if (mx >= _smaskW) mx = _smaskW - 1;
+
+                uint8_t mA = _smaskAlpha[(size_t)my * _smaskW + mx];
+
+                size_t idx = ((size_t)y * bufW + x) * 4;
+
+                uint8_t sB = _smaskSavedBuffer[idx + 0];
+                uint8_t sG = _smaskSavedBuffer[idx + 1];
+                uint8_t sR = _smaskSavedBuffer[idx + 2];
+                uint8_t sA = _smaskSavedBuffer[idx + 3];
+
+                uint8_t cB = _buffer[idx + 0];
+                uint8_t cG = _buffer[idx + 1];
+                uint8_t cR = _buffer[idx + 2];
+                uint8_t cA = _buffer[idx + 3];
+
+                // Blend: result = saved + (current - saved) * mask / 255
+                _buffer[idx + 0] = (uint8_t)(sB + ((int)(cB - sB) * mA) / 255);
+                _buffer[idx + 1] = (uint8_t)(sG + ((int)(cG - sG) * mA) / 255);
+                _buffer[idx + 2] = (uint8_t)(sR + ((int)(cR - sR) * mA) / 255);
+                _buffer[idx + 3] = (uint8_t)(sA + ((int)(cA - sA) * mA) / 255);
+            }
+        }
+
+        _smaskSavedBuffer.clear();
+        _smaskAlpha.clear();
+        _hasSmask = false;
+    }
 
 } // namespace pdf

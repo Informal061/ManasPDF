@@ -117,6 +117,9 @@ namespace pdf
 
         std::vector<uint8_t> getBuffer() override;
 
+        // Zero-copy: write directly from WIC bitmap to caller's buffer
+        bool getBufferDirect(uint8_t* outBuffer, int outBufferSize);
+
         bool isGPU() const override { return true; }
 
         // ==================== PERFORMANCE OPTIMIZATION ====================
@@ -281,14 +284,15 @@ namespace pdf
             double horizScale,
             double textAngle);
 
-        // Type3 glyph cache: key = fontHash ^ glyphName hash
+        // Type3 glyph cache: key = fontHash ^ glyphName hash ^ quantized size
         struct Type3CachedGlyph {
             std::vector<uint8_t> alpha;  // grayscale alpha bitmap
             int width = 0;
             int height = 0;
             int bearingX = 0;  // left offset from glyph origin (glyph units)
             int bearingY = 0;  // top offset from baseline (glyph units)
-            double bboxH = 0;  // bbox height in glyph units (for scale calculation)
+            double bboxW = 0;  // bbox width in glyph units (for X scale)
+            double bboxH = 0;  // bbox height in glyph units (for Y scale)
         };
         std::map<size_t, Type3CachedGlyph> _type3Cache;
     };

@@ -265,6 +265,7 @@ namespace pdf
         _gs = initialGs;
         _gs.lineJoin = 1;
         _resStack = resourceStack;
+        _defaultCtm = initialGs.ctm;  // Save initial CTM for pattern brush mapping
     }
 
 
@@ -1017,7 +1018,12 @@ namespace pdf
                 }
                 else
                 {
-                    LogDebug("Pattern could not be resolved, falling back to solid fill");
+                    // Pattern çözümlenemedi: solid fill'e düşme, çünkü Pattern CS'de
+                    // fillColor anlamlı değil (genelde 0,0,0 kalır ve siyah dolar).
+                    // Atla: altındaki içerik görünür kalsın.
+                    LogDebug("Pattern could not be resolved, skipping fill (avoiding black fallback)");
+                    _currentPath.clear();
+                    return;
                 }
             }
 
@@ -1142,8 +1148,14 @@ namespace pdf
             auto patternObj = _doc->resolve(patternRaw, visited);
             auto patternDict = std::dynamic_pointer_cast<PdfDictionary>(patternObj);
             if (!patternDict) {
-                LogDebug("  Pattern '%s' is not a dictionary!", name.c_str());
-                continue;
+                // Tiling patterns are PdfStream objects (PdfStream is NOT a PdfDictionary subclass)
+                auto patternStream = std::dynamic_pointer_cast<PdfStream>(patternObj);
+                if (patternStream && patternStream->dict)
+                    patternDict = patternStream->dict;
+                else {
+                    LogDebug("  Pattern '%s' is not a dictionary!", name.c_str());
+                    continue;
+                }
             }
 
             // PatternType kontrol et
@@ -1383,7 +1395,14 @@ namespace pdf
         }
 
         auto patternDict = std::dynamic_pointer_cast<PdfDictionary>(patternObj);
-        if (!patternDict) return false;
+        if (!patternDict) {
+            // Tiling patterns are PdfStream objects (PdfStream is NOT a PdfDictionary subclass)
+            auto patternStream = std::dynamic_pointer_cast<PdfStream>(patternObj);
+            if (patternStream && patternStream->dict)
+                patternDict = patternStream->dict;
+            else
+                return false;
+        }
 
         // PatternType
         auto ptNum = std::dynamic_pointer_cast<PdfNumber>(resolveObj(patternDict->get("/PatternType")));
@@ -1395,6 +1414,7 @@ namespace pdf
         pattern.matrix = PdfMatrix(); // identity
         auto matrixRaw = patternDict->get("/Matrix");
         if (matrixRaw) pattern.matrix = readMatrix6(matrixRaw);
+        pattern.defaultCtm = _defaultCtm;  // Parent's initial CTM for brush mapping
 
         if (type == 1)
         {
@@ -1463,27 +1483,26 @@ namespace pdf
                 double height = bh - by;
                 if (width <= 0 || height <= 0) return false;
 
-                // 2. Setup resolution
+                // 2. Setup resolution - scale down if BBox exceeds max tile size
+                const int MAX_TILE_DIM = 4096;
                 double scale = 1.0;
-                // Eğer pattern 1x1 birimse ve ekranda 100 pikselse?
-                // Scale factor kritik.
-                // MuPDF, CTM'e göre scale hesaplar.
-                // _gs.ctm ile patternMatrix çarpılır, oradaki scale'e bakılır.
-                // Basitlik için: Global bir scale veya 1.0.
-                // Şimdilik 1.0 ile devam.
+                if (width > MAX_TILE_DIM || height > MAX_TILE_DIM) {
+                    scale = std::min((double)MAX_TILE_DIM / width,
+                                     (double)MAX_TILE_DIM / height);
+                }
 
                 int bufW = (int)std::ceil(width * scale);
                 int bufH = (int)std::ceil(height * scale);
 
-                // Safe clamping using standard library
-                bufW = std::max(1, std::min(bufW, 2048));
-                bufH = std::max(1, std::min(bufH, 2048));
+                // Safe clamping
+                bufW = std::max(1, std::min(bufW, MAX_TILE_DIM));
+                bufH = std::max(1, std::min(bufH, MAX_TILE_DIM));
 
                 pattern.width = bufW;
                 pattern.height = bufH;
 
-                // 3. Render
-                PdfPainter tilePainter(bufW, bufH, 1.0, 1.0, 1);
+                // 3. Render (scale converts user space coords to pixel coords)
+                PdfPainter tilePainter(bufW, bufH, scale, scale, 1);
                 tilePainter.clear(0x00000000);
 
                 PdfGraphicsState tileGS = _gs;
@@ -1529,6 +1548,34 @@ namespace pdf
                 );
 
                 child.parse();
+
+                // DEBUG: tile içeriğini analiz et
+                {
+                    FILE* tdbg = fopen("C:\\temp\\tile_debug.txt", "a");
+                    if (tdbg) {
+                        fprintf(tdbg, "\n=== TILE RENDER: %s (%dx%d) ===\n",
+                            name.c_str(), bufW, bufH);
+                        fprintf(tdbg, "childResStack size: %zu\n", childResStack.size());
+                        // Check buffer for non-transparent pixels
+                        const auto& rawBuf2 = tilePainter.getRawBuffer();
+                        int nonZero = 0, total = bufW * bufH;
+                        for (int i = 0; i < total && i < 100000; i++) {
+                            if (rawBuf2[i * 4 + 3] != 0) nonZero++;
+                        }
+                        fprintf(tdbg, "Non-transparent pixels (first 100k): %d / %d\n",
+                            nonZero, std::min(total, 100000));
+                        // Sample some pixels
+                        for (int sy = 0; sy < bufH; sy += bufH/5) {
+                            int sx = bufW / 2;
+                            int idx = (sy * bufW + sx) * 4;
+                            fprintf(tdbg, "  pixel(%d,%d): B=%d G=%d R=%d A=%d\n",
+                                sx, sy, rawBuf2[idx], rawBuf2[idx+1], rawBuf2[idx+2], rawBuf2[idx+3]);
+                        }
+                        fprintf(tdbg, "tilePainter.smaskWasRequested=%d\n",
+                            tilePainter.smaskWasRequested() ? 1 : 0);
+                        fclose(tdbg);
+                    }
+                }
 
                 // 4. Capture Buffer
                 pattern.buffer.resize(bufW * bufH);
@@ -2287,6 +2334,17 @@ namespace pdf
             {
                 LogDebug("Pattern fill (even-odd) detected: '%s'", _gs.fillPatternName.c_str());
 
+                // DEBUG: pattern fill trace
+                {
+                    FILE* tdbg = fopen("C:\\temp\\tile_debug.txt", "a");
+                    if (tdbg) {
+                        fprintf(tdbg, "op_f_evenodd: fillPatternName='%s', path.size=%zu, fillAlpha=%.3f\n",
+                            _gs.fillPatternName.c_str(), _currentPath.size(), _gs.fillAlpha);
+                        fprintf(tdbg, "  painter=%p, isGPU=%d\n", (void*)_painter, _painter ? _painter->isGPU() : -1);
+                        fclose(tdbg);
+                    }
+                }
+
                 // 1. Try Resolving Tiling Pattern (Type 1)
                 PdfPattern pattern;
                 if (resolvePattern(_gs.fillPatternName, pattern))
@@ -2311,10 +2369,16 @@ namespace pdf
 
                 if (resolvePatternToGradient(_gs.fillPatternName, gradient, patternMatrix))
                 {
-                    // =====================================================
-                    // ✅ DOĞRU MATRİS ZİNCİRİ (MuPDF/Adobe gibi):
-                    // gradientCTM = PatternMatrix * CTM
-                    // =====================================================
+                    // DEBUG
+                    {
+                        FILE* tdbg = fopen("C:\\temp\\tile_debug.txt", "a");
+                        if (tdbg) {
+                            fprintf(tdbg, "  resolvePatternToGradient SUCCESS: '%s', stops=%zu, type=%d\n",
+                                _gs.fillPatternName.c_str(), gradient.stops.size(), gradient.type);
+                            fclose(tdbg);
+                        }
+                    }
+
                     PdfMatrix gradientCTM = PdfMul(patternMatrix, _gs.ctm);
 
                     _painter->fillPathWithGradient(
@@ -2325,6 +2389,21 @@ namespace pdf
                         true  // even-odd = true
                     );
 
+                    _currentPath.clear();
+                    return;
+                }
+                else
+                {
+                    // DEBUG
+                    {
+                        FILE* tdbg = fopen("C:\\temp\\tile_debug.txt", "a");
+                        if (tdbg) {
+                            fprintf(tdbg, "  resolvePatternToGradient FAILED: '%s'\n",
+                                _gs.fillPatternName.c_str());
+                            fclose(tdbg);
+                        }
+                    }
+                    LogDebug("Pattern (even-odd) could not be resolved, skipping fill");
                     _currentPath.clear();
                     return;
                 }
@@ -2403,6 +2482,11 @@ namespace pdf
                         PdfMatrix gradientCTM = PdfMul(patternMatrix, _gs.ctm);
                         _painter->fillPathWithGradient(_currentPath, gradient, _gs.ctm, gradientCTM, false);
                         patternFilled = true;
+                    }
+                    else
+                    {
+                        // Pattern çözümlenemedi - siyah fallback'ten kaçın
+                        patternFilled = true; // skip solid fill
                     }
                 }
             }
@@ -3681,8 +3765,11 @@ namespace pdf
                     }
                     if (moveCount != 1 || lineCount < 3 || lineCount > 4) isRect = false;
 
-                    if (isRect && _clippingPath.size() <= 6) {
-                        // Simple rect clip - use drawImageWithClipRect
+                    // Rotated images (b!=0 or c!=0) need drawImageClipped for correct transform
+                    bool hasRotation = (std::abs(image_ctm.b) > 0.001 || std::abs(image_ctm.c) > 0.001);
+
+                    if (isRect && _clippingPath.size() <= 6 && !hasRotation) {
+                        // Simple rect clip, no rotation - use drawImageWithClipRect
                         double minX = 1e30, minY = 1e30, maxX = -1e30, maxY = -1e30;
                         for (const auto& seg : _clippingPath) {
                             double tx = _clippingPathCTM.a * seg.x + _clippingPathCTM.c * seg.y + _clippingPathCTM.e;

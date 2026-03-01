@@ -5,7 +5,7 @@
 <h1 align="center">ManasPDF</h1>
 
 <p align="center">
-  <a href=""><img src="https://img.shields.io/badge/version-0.1.1--alpha-orange" alt="Version"></a>
+  <a href=""><img src="https://img.shields.io/badge/version-0.1.2--alpha-orange" alt="Version"></a>
   <a href=""><img src="https://img.shields.io/badge/status-in%20development-yellow" alt="Status"></a>
   <a href=""><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 </p>
@@ -365,6 +365,38 @@ ManasPDF/
 See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
 
 ## Changelog
+
+### 0.1.2-alpha (2026-02-27)
+
+**Bug Fixes**
+- Fixed garbled text rendering for subset TrueType fonts with custom ToUnicode CMap
+  - WinAnsi glyph names no longer override ToUnicode mappings for fonts without explicit `/Encoding`
+  - Added symbolic cmap (0xF000+code) fallback per PDF spec for TrueType fonts with (3,0) cmap
+  - Subset symbolic fonts (no glyph names, Mac-only cmap): direct code→GID mapping now takes priority over Unicode→GID lookup to prevent incorrect glyph substitution
+- Fixed rendering of complex gradient overlays using nested tiling patterns and rotated images with SMask
+  - PdfStream objects in pattern resolution now handled correctly (fallback from PdfDictionary cast)
+  - Tiling pattern tile size limit increased from 2048 to 4096 with dynamic scale calculation for large BBox patterns
+  - Fixed double premultiplied alpha in tiling pattern bitmap brush creation
+  - Proper brush transform composition: bitmap Y-flip → pattern matrix → default CTM → device scale
+  - Unresolvable pattern fills now skip gracefully instead of falling back to solid black
+  - Rotated images with rect clip now use bitmap brush transform instead of AABB stretch (rotation was lost)
+  - Fixed pre-scaling dimension calculation for rotated images (per-axis extent instead of AABB)
+- Fixed UI overflow on multi-monitor setups with different DPI scales (e.g., 1080p main + 1440p secondary)
+  - Added `WM_DPICHANGED` handler: updates DPI scale and applies suggested window rect when dragging between monitors
+  - Clears render cache and re-renders visible pages at new DPI automatically
+
+**Memory Optimization**
+- Eliminated redundant buffer copies during page rendering (peak memory reduced by ~50%)
+  - Added `getBufferDirect()` to GPU painter: writes directly from WIC bitmap to output buffer
+  - Added `getDownsampledBufferDirect()` to CPU painter: downsamples directly into output buffer
+  - Added `storeFromRaw()` to page render cache: stores from raw pointer without extra vector copy
+- Proactive cache trimming: page cache is cleared before large renders when total exceeds 400MB
+- Large single entries (>125MB) are no longer cached to prevent cache thrashing
+
+**Crash Prevention**
+- Added `std::bad_alloc` protection during GPU and CPU rendering: clears page + glyph caches on OOM
+- Added `std::bad_alloc` protection in cache store: gracefully skips caching if allocation fails
+- Added `OutOfMemoryException` protection for `WriteableBitmap` creation on C# side
 
 ### 0.1.1-alpha (2026-02-21)
 

@@ -15,6 +15,8 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 using System.Windows.Xps;
 using System.Windows.Xps.Packaging;
 using Microsoft.Win32;
@@ -51,6 +53,7 @@ namespace ManasPDF.Wpf
         private readonly ObservableCollection<PageViewModel> _pages = new();
         private readonly DispatcherTimer _zoomDebounceTimer;
         private const int ZoomDebounceMs = 150;
+        private bool _isZooming;
 
         // Zoom levels
         private static readonly double[] ZoomLevels =
@@ -234,20 +237,16 @@ namespace ManasPDF.Wpf
                 GoToPage(_currentPage - 1);
         }
 
-        /// <summary>Zoom in one level.</summary>
+        /// <summary>Zoom in (1.25x multiplier, viewport-anchored).</summary>
         public void ZoomIn()
         {
-            int idx = Array.FindIndex(ZoomLevels, z => z > _zoomLevel);
-            if (idx >= 0)
-                ZoomLevel = ZoomLevels[idx];
+            ZoomWithViewportAnchor(_zoomLevel * 1.25);
         }
 
-        /// <summary>Zoom out one level.</summary>
+        /// <summary>Zoom out (1/1.25 multiplier, viewport-anchored).</summary>
         public void ZoomOut()
         {
-            int idx = Array.FindLastIndex(ZoomLevels, z => z < _zoomLevel);
-            if (idx >= 0)
-                ZoomLevel = ZoomLevels[idx];
+            ZoomWithViewportAnchor(_zoomLevel / 1.25);
         }
 
         /// <summary>
@@ -748,20 +747,42 @@ namespace ManasPDF.Wpf
                 var doc = _document;
                 int totalPg = _totalPages;
                 string filePath = _documentPath;
+                double dpiScale = _dpiScale;
+
+                // Get monitor work area (multi-monitor aware)
+                double screenW, screenH;
+                var parentWindow = Window.GetWindow(this);
+                try
+                {
+                    var hwnd = new WindowInteropHelper(parentWindow).Handle;
+                    var monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    var mi = new MONITORINFO();
+                    mi.cbSize = Marshal.SizeOf(mi);
+                    GetMonitorInfo(monitor, ref mi);
+
+                    var source = PresentationSource.FromVisual(this);
+                    double dpiX = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+                    double dpiY = source?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
+                    screenW = (mi.rcWork.Right - mi.rcWork.Left) / dpiX;
+                    screenH = (mi.rcWork.Bottom - mi.rcWork.Top) / dpiY;
+                }
+                catch
+                {
+                    screenW = SystemParameters.WorkArea.Width;
+                    screenH = SystemParameters.WorkArea.Height;
+                }
 
                 // Render first page to calculate preview window size
                 var firstPage = doc.GetPage(0);
                 byte[]? firstPixels = firstPage.Render(1.0, out int firstW, out int firstH);
-                double pdfW = firstPixels != null ? firstW / _dpiScale : 600;
-                double pdfH = firstPixels != null ? firstH / _dpiScale : 800;
+                double pdfW = firstPixels != null ? firstW / dpiScale : 600;
+                double pdfH = firstPixels != null ? firstH / dpiScale : 800;
 
                 double chromeH = 160;
                 double paddingW = 80;
                 double idealW = pdfW * 0.85 + paddingW;
                 double idealH = pdfH * 0.85 + chromeH;
 
-                double screenW = SystemParameters.WorkArea.Width;
-                double screenH = SystemParameters.WorkArea.Height;
                 if (idealW > screenW * 0.9 || idealH > screenH * 0.9)
                 {
                     double s = Math.Min(screenW * 0.9 / idealW, screenH * 0.9 / idealH);
@@ -770,9 +791,6 @@ namespace ManasPDF.Wpf
                 }
                 idealW = Math.Max(idealW, 500);
                 idealH = Math.Max(idealH, 400);
-
-                // Find parent window for owner
-                var parentWindow = Window.GetWindow(this);
 
                 var previewWindow = new Window
                 {
@@ -923,12 +941,12 @@ namespace ManasPDF.Wpf
                         byte[]? pixels = page.Render(1.0, out int w, out int h);
                         if (pixels != null && w > 0 && h > 0)
                         {
-                            var bmp = new WriteableBitmap(w, h, 96 * _dpiScale, 96 * _dpiScale, PixelFormats.Bgra32, null);
+                            var bmp = new WriteableBitmap(w, h, 96 * dpiScale, 96 * dpiScale, PixelFormats.Bgra32, null);
                             bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
                             bmp.Freeze();
                             previewImage.Source = bmp;
-                            previewImage.Width = bmp.PixelWidth * 0.75 / _dpiScale;
-                            previewImage.Height = bmp.PixelHeight * 0.75 / _dpiScale;
+                            previewImage.Width = bmp.PixelWidth * 0.75 / dpiScale;
+                            previewImage.Height = bmp.PixelHeight * 0.75 / dpiScale;
                         }
                     }
                     catch { }
@@ -944,54 +962,67 @@ namespace ManasPDF.Wpf
                 btnNext.Click += (s, a) => { if (currentPreviewPage < totalPg - 1) { currentPreviewPage++; renderCurrentPage(); } };
                 btnCancel.Click += (s, a) => previewWindow.Close();
 
-                btnPrint.Click += (s, a) =>
+                btnPrint.Click += async (s, a) =>
                 {
-                    string? tempXpsPath = null;
+                    var printerName = printerCombo.SelectedItem as string;
+                    if (string.IsNullOrEmpty(printerName))
+                    {
+                        MessageBox.Show("Please select a printer.", "Warning",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    btnPrint.IsEnabled = false;
+                    btnCancel.IsEnabled = false;
+
                     try
                     {
-                        var printerName = printerCombo.SelectedItem as string;
-                        if (string.IsNullOrEmpty(printerName))
-                        {
-                            MessageBox.Show("Please select a printer.", "Warning",
-                                MessageBoxButton.OK, MessageBoxImage.Warning);
-                            return;
-                        }
-
-                        PrintQueue? selectedQueue = null;
+                        var pd = new PrintDialog();
                         try
                         {
                             var server = new LocalPrintServer();
-                            selectedQueue = server.GetPrintQueue(printerName);
+                            pd.PrintQueue = server.GetPrintQueue(printerName);
                         }
                         catch (Exception pex)
                         {
                             MessageBox.Show($"Cannot access printer: {pex.Message}", "Error",
                                 MessageBoxButton.OK, MessageBoxImage.Error);
+                            btnPrint.IsEnabled = true;
+                            btnCancel.IsEnabled = true;
                             return;
                         }
 
-                        // Get paper size from printer
-                        var caps = selectedQueue.GetPrintCapabilities();
-                        double pageW = caps.PageImageableArea?.ExtentWidth ?? 816;
-                        double pageH = caps.PageImageableArea?.ExtentHeight ?? 1056;
-
-                        // Write to temp XPS file — do NOT call PrintDialog.ShowDialog(), causes XPS conflicts
-                        tempXpsPath = System.IO.Path.Combine(
-                            System.IO.Path.GetTempPath(),
-                            $"ManasPDF_print_{Guid.NewGuid()}.xps");
+                        double pageW = pd.PrintableAreaWidth;
+                        double pageH = pd.PrintableAreaHeight;
                         var pageSize = new Size(pageW, pageH);
-                        var paginator = new PdfDocumentPaginator(doc, totalPg, pageSize);
 
-                        using (var xpsDoc = new XpsDocument(tempXpsPath, FileAccess.ReadWrite))
+                        // Pre-render all pages at 2x zoom for high-quality printing (with progress)
+                        var frozenBitmaps = new BitmapSource?[totalPg];
+                        for (int i = 0; i < totalPg; i++)
                         {
-                            var writer = XpsDocument.CreateXpsDocumentWriter(xpsDoc);
-                            writer.Write(paginator);
+                            btnPrint.Content = $"Page {i + 1}/{totalPg}...";
+                            await Task.Delay(1); // Allow UI to update
+
+                            try
+                            {
+                                var page = doc.GetPage(i);
+                                byte[]? pixels = page.Render(2.0, out int w, out int h);
+                                if (pixels != null && w > 0 && h > 0)
+                                {
+                                    var bmp = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
+                                    bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
+                                    bmp.Freeze();
+                                    frozenBitmaps[i] = bmp;
+                                }
+                            }
+                            catch { }
                         }
 
-                        // Send to printer (XPS file is closed, no conflict)
-                        selectedQueue.AddJob(
-                            $"ManasPDF - {System.IO.Path.GetFileName(filePath)}",
-                            tempXpsPath, false);
+                        btnPrint.Content = "Printing...";
+                        await Task.Delay(1);
+
+                        var paginator = new PreRenderedPaginator(frozenBitmaps, pageSize);
+                        pd.PrintDocument(paginator, $"ManasPDF - {System.IO.Path.GetFileName(filePath)}");
 
                         previewWindow.Close();
                     }
@@ -999,18 +1030,9 @@ namespace ManasPDF.Wpf
                     {
                         MessageBox.Show($"Print error: {ex2.Message}", "Error",
                             MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                    finally
-                    {
-                        if (tempXpsPath != null)
-                        {
-                            var pathToClean = tempXpsPath;
-                            Task.Run(async () =>
-                            {
-                                await Task.Delay(5000);
-                                try { if (File.Exists(pathToClean)) File.Delete(pathToClean); } catch { }
-                            });
-                        }
+                        btnPrint.IsEnabled = true;
+                        btnCancel.IsEnabled = true;
+                        btnPrint.Content = "Print";
                     }
                 };
 
@@ -1275,9 +1297,20 @@ namespace ManasPDF.Wpf
         {
             if (Keyboard.Modifiers == ModifierKeys.Control)
             {
-                if (e.Delta > 0) ZoomIn();
-                else ZoomOut();
                 e.Handled = true;
+
+                // Mouse-centered zoom: keep the content point under the cursor at the same screen position
+                var mousePos = e.GetPosition(PdfScrollViewer);
+                double oldVOffset = PdfScrollViewer.VerticalOffset;
+                double oldHOffset = PdfScrollViewer.HorizontalOffset;
+                double oldZoom = _zoomLevel;
+
+                double factor = e.Delta > 0 ? 1.15 : 1.0 / 1.15;
+                SetZoomFast(_zoomLevel * factor);
+
+                double scale = _zoomLevel / oldZoom;
+                PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, (oldVOffset + mousePos.Y) * scale - mousePos.Y));
+                PdfScrollViewer.ScrollToHorizontalOffset(Math.Max(0, (oldHOffset + mousePos.X) * scale - mousePos.X));
             }
         }
 
@@ -1289,7 +1322,86 @@ namespace ManasPDF.Wpf
         private void ZoomDebounceTimer_Tick(object? sender, EventArgs e)
         {
             _zoomDebounceTimer.Stop();
+            _isZooming = false;
             RenderAllPagesAsync();
+        }
+
+        /// <summary>
+        /// Viewport-centered zoom for +/- toolbar buttons.
+        /// Keeps the center of the viewport at the same content position.
+        /// </summary>
+        private void ZoomWithViewportAnchor(double newZoom)
+        {
+            double oldVOffset = PdfScrollViewer.VerticalOffset;
+            double oldHOffset = PdfScrollViewer.HorizontalOffset;
+            double oldZoom = _zoomLevel;
+
+            SetZoomFast(newZoom);
+
+            double scale = _zoomLevel / oldZoom;
+            double centerY = PdfScrollViewer.ViewportHeight / 2;
+            double centerX = PdfScrollViewer.ViewportWidth / 2;
+            PdfScrollViewer.ScrollToVerticalOffset(Math.Max(0, (oldVOffset + centerY) * scale - centerY));
+            PdfScrollViewer.ScrollToHorizontalOffset(Math.Max(0, (oldHOffset + centerX) * scale - centerX));
+        }
+
+        /// <summary>
+        /// Fast zoom: instantly scales all existing page bitmaps using TransformedBitmap (O(1)),
+        /// then schedules a debounced full-quality re-render.
+        /// </summary>
+        private void SetZoomFast(double newZoom)
+        {
+            newZoom = Math.Clamp(newZoom, 0.1, 10.0);
+            if (Math.Abs(newZoom - _zoomLevel) < 0.001) return;
+
+            double oldZoom = _zoomLevel;
+            _zoomLevel = newZoom;
+            _isZooming = true;
+
+            UpdateZoomText();
+            ZoomChanged?.Invoke(this, _zoomLevel);
+
+            // Scale all existing page bitmaps instantly (TransformedBitmap is O(1), no pixel copy)
+            UpdateAllPagesWithScaling(oldZoom, newZoom);
+
+            // Restart debounce timer for full quality re-render
+            _zoomDebounceTimer.Stop();
+            _zoomDebounceTimer.Start();
+        }
+
+        /// <summary>
+        /// Scales all page bitmaps using TransformedBitmap for instant visual feedback.
+        /// All pages resize immediately on zoom — not just visible ones.
+        /// </summary>
+        private void UpdateAllPagesWithScaling(double oldZoom, double newZoom)
+        {
+            double scaleFactor = newZoom / oldZoom;
+
+            for (int i = 0; i < _pages.Count; i++)
+            {
+                var pageItem = _pages[i];
+                if (pageItem.PageImage is BitmapSource bmpSource)
+                {
+                    var scaled = ScaleBitmapDirect(bmpSource, scaleFactor);
+                    if (scaled != null)
+                    {
+                        pageItem.PageImage = scaled;
+                        pageItem.OverlayWidth = scaled.PixelWidth / _dpiScale;
+                        pageItem.OverlayHeight = scaled.PixelHeight / _dpiScale;
+                    }
+                }
+            }
+
+            RefreshAllOverlays();
+        }
+
+        private static BitmapSource? ScaleBitmapDirect(BitmapSource? source, double scale)
+        {
+            if (source == null || Math.Abs(scale - 1.0) < 0.001) return source;
+
+            var transformed = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+            transformed.Freeze();
+            return transformed;
         }
 
         #endregion
@@ -1444,6 +1556,30 @@ namespace ManasPDF.Wpf
 
         #endregion
 
+        #region P/Invoke (Multi-Monitor)
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
+        private const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+        #endregion
+
         #region Helpers
 
         private void UpdatePageInfo()
@@ -1592,23 +1728,22 @@ namespace ManasPDF.Wpf
     #region Print Support
 
     /// <summary>
-    /// DocumentPaginator for printing PDF pages via the WPF printing infrastructure.
+    /// DocumentPaginator that uses pre-rendered bitmaps for high-quality, async-friendly printing.
+    /// Pages are rendered beforehand at 2x zoom and stored as frozen BitmapSource objects.
     /// </summary>
-    internal class PdfDocumentPaginator : DocumentPaginator
+    internal class PreRenderedPaginator : DocumentPaginator
     {
-        private readonly PdfDocument _document;
-        private readonly int _pageCount;
+        private readonly BitmapSource?[] _bitmaps;
         private Size _pageSize;
 
-        internal PdfDocumentPaginator(PdfDocument document, int pageCount, Size pageSize)
+        internal PreRenderedPaginator(BitmapSource?[] bitmaps, Size pageSize)
         {
-            _document = document;
-            _pageCount = pageCount;
+            _bitmaps = bitmaps;
             _pageSize = pageSize;
         }
 
         public override bool IsPageCountValid => true;
-        public override int PageCount => _pageCount;
+        public override int PageCount => _bitmaps.Length;
 
         public override Size PageSize
         {
@@ -1620,49 +1755,31 @@ namespace ManasPDF.Wpf
 
         public override DocumentPage GetPage(int pageNumber)
         {
-            if (pageNumber < 0 || pageNumber >= _pageCount)
+            if (pageNumber < 0 || pageNumber >= _bitmaps.Length || _bitmaps[pageNumber] == null)
                 return DocumentPage.Missing;
 
-            try
+            var bitmap = _bitmaps[pageNumber]!;
+
+            double areaWidth = _pageSize.Width;
+            double areaHeight = _pageSize.Height;
+
+            double scaleX = areaWidth / bitmap.PixelWidth;
+            double scaleY = areaHeight / bitmap.PixelHeight;
+            double scale = Math.Min(scaleX, scaleY);
+
+            double w = bitmap.PixelWidth * scale;
+            double h = bitmap.PixelHeight * scale;
+            double x = (areaWidth - w) / 2;
+            double y = (areaHeight - h) / 2;
+
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
             {
-                var page = _document.GetPage(pageNumber);
-
-                // Render at 2x zoom for high-quality printing
-                byte[]? pixels = page.Render(2.0, out int w, out int h);
-                if (pixels == null || w <= 0 || h <= 0)
-                    return DocumentPage.Missing;
-
-                var bmp = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
-                bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
-                bmp.Freeze();
-
-                double areaWidth = _pageSize.Width;
-                double areaHeight = _pageSize.Height;
-
-                // Scale to fit page, preserving aspect ratio
-                double scaleX = areaWidth / bmp.PixelWidth;
-                double scaleY = areaHeight / bmp.PixelHeight;
-                double scale = Math.Min(scaleX, scaleY);
-
-                double imgW = bmp.PixelWidth * scale;
-                double imgH = bmp.PixelHeight * scale;
-                double x = (areaWidth - imgW) / 2;
-                double y = (areaHeight - imgH) / 2;
-
-                // Use DrawingVisual for XPS compatibility
-                var visual = new DrawingVisual();
-                using (var dc = visual.RenderOpen())
-                {
-                    dc.DrawImage(bmp, new Rect(x, y, imgW, imgH));
-                }
-
-                return new DocumentPage(visual, _pageSize,
-                    new Rect(_pageSize), new Rect(_pageSize));
+                dc.DrawImage(bitmap, new Rect(x, y, w, h));
             }
-            catch
-            {
-                return DocumentPage.Missing;
-            }
+
+            return new DocumentPage(visual, _pageSize,
+                new Rect(_pageSize), new Rect(_pageSize));
         }
     }
 

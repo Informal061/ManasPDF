@@ -1021,9 +1021,12 @@ namespace pdf
                         "oslash","ugrave","uacute","ucircumflex","udieresis","yacute","thorn","ydieresis"
                     };
                     bool isWinAnsi = (info.encoding == "/WinAnsiEncoding" || info.encoding == "WinAnsiEncoding");
-                    // Encoding boş bile olsa (base encoding yoksa), standart glyph isimleri doldur
-                    // CFF fontlarda bu zorunlu — charmap olmadan sadece glyph name ile erişilebilir
-                    if (isWinAnsi || info.encoding.empty()) {
+                    // WinAnsi glyph isimlerini doldur:
+                    // - Açıkça WinAnsiEncoding ise: her zaman doldur
+                    // - Encoding boşsa VE ToUnicode yoksa: CFF fontlar için doldur
+                    // - Encoding boşsa AMA ToUnicode varsa: DOLDURMA!
+                    //   (Subset fontlarda ToUnicode custom kodlama sağlar, WinAnsi isimleri yanlış eşleşme yapar)
+                    if (isWinAnsi || (info.encoding.empty() && !info.hasSimpleMap)) {
                         for (int code = 0; code < 256; code++) {
                             if (info.codeToGlyphName[code].empty() && winAnsiGlyphNames[code] != nullptr) {
                                 info.codeToGlyphName[code] = winAnsiGlyphNames[code];
@@ -1056,12 +1059,22 @@ namespace pdf
 
                         // 1. Doğru charmap'i seç (MuPDF select_truetype_cmap gibi)
                         FT_CharMap bestCmap = nullptr;
+                        bool hasSymbolicCmap = false;
 
                         // Önce Microsoft Unicode cmap (platform=3, encoding=1)
                         for (int cm = 0; cm < tempFace->num_charmaps; cm++) {
                             if (tempFace->charmaps[cm]->platform_id == 3 &&
                                 tempFace->charmaps[cm]->encoding_id == 1) {
                                 bestCmap = tempFace->charmaps[cm];
+                                break;
+                            }
+                        }
+                        // Microsoft Symbol cmap (platform=3, encoding=0) var mı kontrol et
+                        for (int cm = 0; cm < tempFace->num_charmaps; cm++) {
+                            if (tempFace->charmaps[cm]->platform_id == 3 &&
+                                tempFace->charmaps[cm]->encoding_id == 0) {
+                                hasSymbolicCmap = true;
+                                if (!bestCmap) bestCmap = tempFace->charmaps[cm];
                                 break;
                             }
                         }
@@ -1098,7 +1111,7 @@ namespace pdf
                             }
                         }
 
-                        // 2. Önce codeToGlyphName'den eşleştir (en güvenilir)
+                        // 2. Önce codeToGlyphName'den eşleştir (en güvenilir - explicit Differences)
                         for (int code = 0; code < 256; code++) {
                             if (!info.codeToGlyphName[code].empty()) {
                                 auto it = nameToGid.find(info.codeToGlyphName[code]);
@@ -1108,19 +1121,70 @@ namespace pdf
                             }
                         }
 
-                        // 3. Fallback: charmap'ten dene
-                        for (int code = 0; code < 256; code++) {
-                            if (info.codeToGid[code] == 0) {
-                                if (info.codeToUnicode[code] != 0) {
-                                    FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
-                                    if (uniGid > 0) {
-                                        info.codeToGid[code] = (uint16_t)uniGid;
+                        // 2.5. ToUnicode + glyph name eşleştirmesi (charmap'i bypass eder)
+                        if (info.hasSimpleMap && !nameToGid.empty()) {
+                            std::map<uint32_t, FT_UInt> unicodeToGid;
+                            for (auto& kv : nameToGid) {
+                                uint32_t uni = glyphNameToUnicode(kv.first);
+                                if (uni != 0) {
+                                    unicodeToGid[uni] = kv.second;
+                                }
+                            }
+
+                            for (int code = 0; code < 256; code++) {
+                                if (info.codeToGid[code] == 0 && info.codeToUnicode[code] != 0) {
+                                    auto it = unicodeToGid.find(info.codeToUnicode[code]);
+                                    if (it != unicodeToGid.end()) {
+                                        info.codeToGid[code] = (uint16_t)it->second;
                                     }
                                 }
-                                if (info.codeToGid[code] == 0) {
+                            }
+                        }
+
+                        // 3. Fallback: charmap'ten dene
+                        // Subset symbolic fontlar (glyph isimsiz, sadece Mac cmap, ToUnicode var):
+                        //   Bu fontlarda Mac cmap standard kodlarda YANLIŞ GID verir.
+                        //   Doğrudan code → cmap mapping (Step3b) DOĞRU sonuç verir.
+                        //   Çünkü PDF generator fontu code=1→GID 1, code=2→GID 2 şeklinde tasarlamıştır.
+                        bool isSubsetSymbolic = !FT_HAS_GLYPH_NAMES(tempFace) &&
+                            info.hasSimpleMap && info.encoding.empty();
+
+                        for (int code = 0; code < 256; code++) {
+                            if (info.codeToGid[code] == 0) {
+                                if (isSubsetSymbolic) {
+                                    // Subset symbolic: ÖNCE doğrudan code → cmap (bu fontlarda doğru)
                                     FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)code);
                                     if (gi > 0) {
                                         info.codeToGid[code] = (uint16_t)gi;
+                                    }
+                                    // Direct bulamazsa Unicode dene (fallback)
+                                    if (info.codeToGid[code] == 0 && info.codeToUnicode[code] != 0) {
+                                        FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
+                                        if (uniGid > 0) {
+                                            info.codeToGid[code] = (uint16_t)uniGid;
+                                        }
+                                    }
+                                } else {
+                                    // Normal font: ÖNCE Unicode → cmap
+                                    if (info.codeToUnicode[code] != 0) {
+                                        FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
+                                        if (uniGid > 0) {
+                                            info.codeToGid[code] = (uint16_t)uniGid;
+                                        }
+                                    }
+                                    // Charcode'u doğrudan dene
+                                    if (info.codeToGid[code] == 0) {
+                                        FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)code);
+                                        if (gi > 0) {
+                                            info.codeToGid[code] = (uint16_t)gi;
+                                        }
+                                    }
+                                }
+                                // PDF spec: Symbolic TrueType cmap (3,0) → 0xF000 + code
+                                if (info.codeToGid[code] == 0 && hasSymbolicCmap) {
+                                    FT_UInt symGid = FT_Get_Char_Index(tempFace, (FT_ULong)(0xF000 + code));
+                                    if (symGid > 0) {
+                                        info.codeToGid[code] = (uint16_t)symGid;
                                     }
                                 }
                             }
@@ -1829,7 +1893,12 @@ namespace pdf
                         "oslash","ugrave","uacute","ucircumflex","udieresis","yacute","thorn","ydieresis"
                     };
                     bool isWinAnsi = (info.encoding == "/WinAnsiEncoding" || info.encoding == "WinAnsiEncoding");
-                    if (isWinAnsi || info.encoding.empty()) {
+                    // WinAnsi glyph isimlerini doldur:
+                    // - Açıkça WinAnsiEncoding ise: her zaman doldur
+                    // - Encoding boşsa VE ToUnicode yoksa: CFF fontlar için doldur
+                    // - Encoding boşsa AMA ToUnicode varsa: DOLDURMA!
+                    //   (Subset fontlarda ToUnicode custom kodlama sağlar, WinAnsi isimleri yanlış eşleşme yapar)
+                    if (isWinAnsi || (info.encoding.empty() && !info.hasSimpleMap)) {
                         for (int code = 0; code < 256; code++) {
                             if (info.codeToGlyphName[code].empty() && winAnsiGlyphNames[code] != nullptr) {
                                 info.codeToGlyphName[code] = winAnsiGlyphNames[code];
@@ -1862,6 +1931,9 @@ namespace pdf
 
                         // 1. Doğru charmap'i seç
                         FT_CharMap bestCmap = nullptr;
+                        bool hasSymbolicCmap = false;
+
+                        // Önce Microsoft Unicode cmap (platform=3, encoding=1)
                         for (int cm = 0; cm < tempFace->num_charmaps; cm++) {
                             if (tempFace->charmaps[cm]->platform_id == 3 &&
                                 tempFace->charmaps[cm]->encoding_id == 1) {
@@ -1869,6 +1941,16 @@ namespace pdf
                                 break;
                             }
                         }
+                        // Microsoft Symbol cmap (platform=3, encoding=0) var mı kontrol et
+                        for (int cm = 0; cm < tempFace->num_charmaps; cm++) {
+                            if (tempFace->charmaps[cm]->platform_id == 3 &&
+                                tempFace->charmaps[cm]->encoding_id == 0) {
+                                hasSymbolicCmap = true;
+                                if (!bestCmap) bestCmap = tempFace->charmaps[cm];
+                                break;
+                            }
+                        }
+                        // Yoksa Apple MacRoman (platform=1, encoding=0)
                         if (!bestCmap) {
                             for (int cm = 0; cm < tempFace->num_charmaps; cm++) {
                                 if (tempFace->charmaps[cm]->platform_id == 1 &&
@@ -1904,7 +1986,7 @@ namespace pdf
                         LogDebug("    Font has %d glyphs, nameToGid map has %zu entries",
                             tempFace->num_glyphs, nameToGid.size());
 
-                        // 2. Önce codeToGlyphName'den eşleştir (en güvenilir)
+                        // 2. Önce codeToGlyphName'den eşleştir (en güvenilir - explicit Differences)
                         for (int code = 0; code < 256; code++) {
                             if (!info.codeToGlyphName[code].empty()) {
                                 auto it = nameToGid.find(info.codeToGlyphName[code]);
@@ -1914,21 +1996,68 @@ namespace pdf
                             }
                         }
 
-                        // 3. Glyph name yoksa charmap'ten dene (fallback)
-                        for (int code = 0; code < 256; code++) {
-                            if (info.codeToGid[code] == 0) {
-                                // Unicode'dan dene
-                                if (info.codeToUnicode[code] != 0) {
-                                    FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
-                                    if (uniGid > 0) {
-                                        info.codeToGid[code] = (uint16_t)uniGid;
+                        // 2.5. ToUnicode + glyph name eşleştirmesi (charmap'i bypass eder)
+                        // Subset fontlarda cmap güvenilir olmayabilir - glyph isimleri her zaman doğrudur
+                        // ToUnicode → Unicode → AGL glyph name → nameToGid → GID
+                        if (info.hasSimpleMap && !nameToGid.empty()) {
+                            // nameToGid'den reverse map: Unicode → GID
+                            std::map<uint32_t, FT_UInt> unicodeToGid;
+                            for (auto& kv : nameToGid) {
+                                uint32_t uni = glyphNameToUnicode(kv.first);
+                                if (uni != 0) {
+                                    unicodeToGid[uni] = kv.second;
+                                }
+                            }
+
+                            for (int code = 0; code < 256; code++) {
+                                if (info.codeToGid[code] == 0 && info.codeToUnicode[code] != 0) {
+                                    auto it = unicodeToGid.find(info.codeToUnicode[code]);
+                                    if (it != unicodeToGid.end()) {
+                                        info.codeToGid[code] = (uint16_t)it->second;
                                     }
                                 }
-                                // Hala 0 ise charcode'dan dene
-                                if (info.codeToGid[code] == 0) {
+                            }
+                        }
+
+                        // 3. Fallback: charmap'ten dene
+                        bool isSubsetSymbolic = !FT_HAS_GLYPH_NAMES(tempFace) &&
+                            info.hasSimpleMap && info.encoding.empty();
+
+                        for (int code = 0; code < 256; code++) {
+                            if (info.codeToGid[code] == 0) {
+                                if (isSubsetSymbolic) {
+                                    // Subset symbolic: ÖNCE doğrudan code → cmap
                                     FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)code);
                                     if (gi > 0) {
                                         info.codeToGid[code] = (uint16_t)gi;
+                                    }
+                                    // Direct bulamazsa Unicode dene
+                                    if (info.codeToGid[code] == 0 && info.codeToUnicode[code] != 0) {
+                                        FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
+                                        if (uniGid > 0) {
+                                            info.codeToGid[code] = (uint16_t)uniGid;
+                                        }
+                                    }
+                                } else {
+                                    // Normal font: ÖNCE Unicode → cmap
+                                    if (info.codeToUnicode[code] != 0) {
+                                        FT_UInt uniGid = FT_Get_Char_Index(tempFace, (FT_ULong)info.codeToUnicode[code]);
+                                        if (uniGid > 0) {
+                                            info.codeToGid[code] = (uint16_t)uniGid;
+                                        }
+                                    }
+                                    if (info.codeToGid[code] == 0) {
+                                        FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)code);
+                                        if (gi > 0) {
+                                            info.codeToGid[code] = (uint16_t)gi;
+                                        }
+                                    }
+                                }
+                                // PDF spec: Symbolic TrueType cmap (3,0) → 0xF000 + code
+                                if (info.codeToGid[code] == 0 && hasSymbolicCmap) {
+                                    FT_UInt symGid = FT_Get_Char_Index(tempFace, (FT_ULong)(0xF000 + code));
+                                    if (symGid > 0) {
+                                        info.codeToGid[code] = (uint16_t)symGid;
                                     }
                                 }
                             }

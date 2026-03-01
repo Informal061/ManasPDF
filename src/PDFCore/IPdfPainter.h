@@ -129,8 +129,17 @@ namespace pdf
         // ==================== SOFT MASK (SMask) ====================
         // Push a luminosity-based soft mask. The mask buffer is a grayscale alpha map
         // (0=fully transparent, 255=fully opaque) at the render target's resolution.
-        virtual void pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH) {}
+        virtual void pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH) {
+            _smaskWasRequested = true;
+        }
         virtual void popSoftMask() {}
+
+        // SMask kullanılıp kullanılmadığını takip eder.
+        // CPU painter SMask desteklemez → tile rendering sonrası bu flag kontrol edilir.
+        bool smaskWasRequested() const { return _smaskWasRequested; }
+
+    protected:
+        bool _smaskWasRequested = false;
     };
 
 } // namespace pdf

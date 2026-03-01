@@ -164,6 +164,7 @@ namespace pdf
         std::map<std::string, PdfFontInfo>* _fonts = nullptr;
 
         PdfGraphicsState _gs;
+        PdfMatrix _defaultCtm;  // CTM at the start of this content stream (for pattern brush mapping)
         std::stack<PdfGraphicsState> _gsStack;
 
         std::vector<std::shared_ptr<PdfObject>> _stack;

@@ -20,7 +20,8 @@ namespace pdf
         std::vector<uint32_t> buffer;
         int width = 0;
         int height = 0;
-        PdfMatrix matrix;
+        PdfMatrix matrix;       // Pattern's own /Matrix (pattern space → parent default CS)
+        PdfMatrix defaultCtm;   // Parent content stream's initial CTM (default CS → device)
         int type = 1;
         int tilingType = 1;
         double xStep = 0;
@@ -120,6 +121,7 @@ namespace pdf
 
         // ==================== CPU-specific methods ====================
         std::vector<uint8_t> getDownsampledBuffer() const;
+        bool getDownsampledBufferDirect(uint8_t* outBuffer, int outBufferSize) const;
         const std::vector<uint8_t>& getRawBuffer() const { return _buffer; }
 
         // Single CTM gradient overload (backwards compatibility)
@@ -164,6 +166,18 @@ namespace pdf
 
         void drawLineDevice(int x1, int y1, int x2, int y2, uint32_t color);
         void blendGray8ToBuffer(int dstX, int dstY, int w, int h, const uint8_t* src, int srcPitch, uint32_t color);
+
+        // ==================== SMask Support ====================
+    public:
+        void pushSoftMask(const std::vector<uint8_t>& maskAlpha, int maskW, int maskH) override;
+        void popSoftMask() override;
+
+    private:
+        std::vector<uint8_t> _smaskSavedBuffer;
+        std::vector<uint8_t> _smaskAlpha;
+        int _smaskW = 0;
+        int _smaskH = 0;
+        bool _hasSmask = false;
     };
 
 } // namespace pdf

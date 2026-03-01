@@ -953,34 +953,14 @@ namespace pdf
         if (!_renderTarget || pattern.buffer.empty() || pattern.width <= 0 || pattern.height <= 0)
             return nullptr;
 
-        // Convert pattern buffer to BGRA with premultiplied alpha
-        std::vector<uint8_t> bgra(pattern.width * pattern.height * 4);
-        for (int i = 0; i < pattern.width * pattern.height; ++i)
-        {
-            uint32_t argb = pattern.buffer[i];
-            uint8_t b = (argb >> 0) & 0xFF;
-            uint8_t g = (argb >> 8) & 0xFF;
-            uint8_t r = (argb >> 16) & 0xFF;
-            uint8_t a = (argb >> 24) & 0xFF;
-
-            // Premultiplied alpha for D2D
-            if (a < 255 && a > 0)
-            {
-                r = (uint8_t)((r * a) / 255);
-                g = (uint8_t)((g * a) / 255);
-                b = (uint8_t)((b * a) / 255);
-            }
-
-            bgra[i * 4 + 0] = b;
-            bgra[i * 4 + 1] = g;
-            bgra[i * 4 + 2] = r;
-            bgra[i * 4 + 3] = a;
-        }
+        // Pattern buffer is already BGRA with premultiplied alpha from PdfPainter (CPU tile renderer).
+        // Just reinterpret uint32_t buffer as raw bytes - no need to re-premultiply.
+        const uint8_t* bgra = reinterpret_cast<const uint8_t*>(pattern.buffer.data());
 
         ID2D1Bitmap* bitmap = nullptr;
         HRESULT hr = _renderTarget->CreateBitmap(
             D2D1::SizeU(pattern.width, pattern.height),
-            bgra.data(),
+            bgra,
             pattern.width * 4,
             D2D1::BitmapProperties(
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
@@ -1000,11 +980,50 @@ namespace pdf
 
         if (FAILED(hr)) return nullptr;
 
-        // Apply pattern transformation
+        // Compose brush transform: bitmap → pattern space → device space
+        // Chain: bitmap_Y_flip * pattern.matrix * defaultCtm * painter_scale_flip
+        //
+        // 1. Bitmap Y-flip: PdfPainter renders with Y-flip (PDF Y-up → pixel Y-down)
+        //    M_flip = (1, 0, 0, -1, 0, pH)  where pH = pattern.height
+        // 2. Pattern matrix: pattern space → parent default coordinate system
+        //    M_pat = pattern.matrix
+        // 3. Default CTM: parent default CS → initial page CS
+        //    M_ctm = pattern.defaultCtm
+        // 4. Painter scale + Y-flip: page CS → device pixels
+        //    M_dev = (_scaleX, 0, 0, -_scaleY, 0, _h)
+        //
+        // Combined: M_flip * M_pat * M_ctm * M_dev
+        // For M_flip * M_pat:  (a, b, -c, -d, pH*c+e, pH*d+f) where a,b,c,d,e,f from M_pat
+        // Then * M_ctm, then * M_dev
+        //
+        // Simplified: compute MC = M_pat * M_ctm, then final = M_flip(MC) * M_dev
+
+        // Step 1: MC = pattern.matrix * defaultCtm (2D affine multiply)
+        const auto& P = pattern.matrix;
+        const auto& C = pattern.defaultCtm;
+        double MCa = P.a * C.a + P.b * C.c;
+        double MCb = P.a * C.b + P.b * C.d;
+        double MCc = P.c * C.a + P.d * C.c;
+        double MCd = P.c * C.b + P.d * C.d;
+        double MCe = P.e * C.a + P.f * C.c + C.e;
+        double MCf = P.e * C.b + P.f * C.d + C.f;
+
+        // Step 2: Apply Y-flip (bitmap→pattern): negate c,d rows, add pH offset
+        double pH = (double)pattern.height;
+        double Fa = MCa;
+        double Fb = MCb;
+        double Fc = -MCc;
+        double Fd = -MCd;
+        double Fe = pH * MCc + MCe;
+        double Ff = pH * MCd + MCf;
+
+        // Step 3: Apply painter scale + Y-flip: (sx, 0, 0, -sy, 0, _h)
+        double sx = _scaleX;
+        double sy = _scaleY;
         D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F(
-            (float)pattern.matrix.a, (float)pattern.matrix.b,
-            (float)pattern.matrix.c, (float)pattern.matrix.d,
-            (float)(pattern.matrix.e * _scaleX), (float)(_h - pattern.matrix.f * _scaleY)
+            (float)(Fa * sx),   (float)(-Fb * sy),
+            (float)(Fc * sx),   (float)(-Fd * sy),
+            (float)(Fe * sx),   (float)(-Ff * sy + _h)
         );
         brush->SetTransform(transform);
 
@@ -1611,6 +1630,14 @@ namespace pdf
                         for (int cm = 0; cm < face->num_charmaps && gid == 0; cm++) {
                             FT_Set_Charmap(face, face->charmaps[cm]);
                             gid = FT_Get_Char_Index(face, (FT_ULong)code);
+                        }
+                    }
+
+                    // Symbolic TrueType cmap: 0xF000 + code (PDF spec)
+                    if (gid == 0 && face->num_charmaps > 0) {
+                        for (int cm = 0; cm < face->num_charmaps && gid == 0; cm++) {
+                            FT_Set_Charmap(face, face->charmaps[cm]);
+                            gid = FT_Get_Char_Index(face, (FT_ULong)(0xF000 + code));
                         }
                     }
                 }
@@ -2407,17 +2434,13 @@ namespace pdf
             _renderTarget->PushAxisAlignedClip(clipRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         }
 
-        // Compute destination pixel size for pre-scaling decision
-        D2D1_POINT_2F dp0 = transformPoint(0, 0, ctm);
-        D2D1_POINT_2F dp1 = transformPoint(1, 0, ctm);
-        D2D1_POINT_2F dp2 = transformPoint(0, 1, ctm);
-        D2D1_POINT_2F dp3 = transformPoint(1, 1, ctm);
-        float dMinX = std::min({ dp0.x, dp1.x, dp2.x, dp3.x });
-        float dMinY = std::min({ dp0.y, dp1.y, dp2.y, dp3.y });
-        float dMaxX = std::max({ dp0.x, dp1.x, dp2.x, dp3.x });
-        float dMaxY = std::max({ dp0.y, dp1.y, dp2.y, dp3.y });
-        int destPixW = (int)(dMaxX - dMinX + 0.5f);
-        int destPixH = (int)(dMaxY - dMinY + 0.5f);
+        // Compute per-axis device extent for proper pre-scaling
+        // u-axis (image width direction) device length
+        double uLen = std::sqrt((ctm.a * _scaleX) * (ctm.a * _scaleX) + (ctm.b * _scaleY) * (ctm.b * _scaleY));
+        // v-axis (image height direction) device length
+        double vLen = std::sqrt((ctm.c * _scaleX) * (ctm.c * _scaleX) + (ctm.d * _scaleY) * (ctm.d * _scaleY));
+        int destPixW = std::max(1, (int)(uLen + 0.5));
+        int destPixH = std::max(1, (int)(vLen + 0.5));
 
         // Use WIC pre-scaling when image is significantly larger than destination
         int bitmapW = imgW, bitmapH = imgH;
@@ -2602,6 +2625,57 @@ namespace pdf
 
         lock->Release();
         return result;
+    }
+
+    // ============================================
+    // GET BUFFER DIRECT (zero-copy to caller buffer)
+    // ============================================
+
+    bool PdfPainterGPU::getBufferDirect(uint8_t* outBuffer, int outBufferSize)
+    {
+        if (!_wicBitmap || !outBuffer) return false;
+
+        const int required = _w * _h * 4;
+        if (outBufferSize < required) return false;
+
+        // Flush any pending batches
+        if (_hasGlyphBatch)
+            flushGlyphBatch();
+
+        // Make sure drawing is finished
+        if (_inDraw) endDraw();
+
+        IWICBitmapLock* lock = nullptr;
+        WICRect rect = { 0, 0, _w, _h };
+
+        HRESULT hr = _wicBitmap->Lock(&rect, WICBitmapLockRead, &lock);
+        if (FAILED(hr)) return false;
+
+        UINT stride = 0;
+        UINT bufferSize = 0;
+        BYTE* data = nullptr;
+
+        lock->GetStride(&stride);
+        lock->GetDataPointer(&bufferSize, &data);
+
+        bool ok = false;
+        if (data && bufferSize > 0)
+        {
+            size_t rowBytes = (size_t)_w * 4;
+            if ((size_t)stride == rowBytes)
+            {
+                std::memcpy(outBuffer, data, rowBytes * _h);
+            }
+            else
+            {
+                for (int y = 0; y < _h; ++y)
+                    memcpy(outBuffer + y * rowBytes, data + y * stride, rowBytes);
+            }
+            ok = true;
+        }
+
+        lock->Release();
+        return ok;
     }
 
     // ============================================
