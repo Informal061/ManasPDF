@@ -5,7 +5,7 @@
 <h1 align="center">ManasPDF</h1>
 
 <p align="center">
-  <a href=""><img src="https://img.shields.io/badge/version-0.1.2--alpha-orange" alt="Version"></a>
+  <a href=""><img src="https://img.shields.io/badge/version-0.1.3--alpha-orange" alt="Version"></a>
   <a href=""><img src="https://img.shields.io/badge/status-in%20development-yellow" alt="Status"></a>
   <a href=""><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 </p>
@@ -365,6 +365,11 @@ ManasPDF/
 See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
 
 ## Changelog
+
+### 0.1.3-alpha (2026-03-02)
+
+**Bug Fixes**
+- Fixed Turkish character rendering (ğ, ş, ı, İ, Ş, Ğ) in subset TrueType fonts with /Differences encoding
 
 ### 0.1.2-alpha (2026-03-01)
 

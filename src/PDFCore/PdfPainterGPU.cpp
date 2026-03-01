@@ -41,6 +41,20 @@ static const uint16_t WinAnsiGPU[256] = {
     0x00F8,0x00F9,0x00FA,0x00FB,0x00FC,0x00FD,0x00FE,0x00FF
 };
 
+static inline uint32_t FixTurkishGPU(uint32_t uni)
+{
+    switch (uni)
+    {
+    case 0xDD: return 0x0130; // Ý -> İ
+    case 0xDE: return 0x015E; // Þ -> Ş
+    case 0xF0: return 0x011F; // ð -> ğ
+    case 0xFD: return 0x0131; // ý -> ı
+    case 0xFE: return 0x015F; // þ -> ş
+    case 0xD0: return 0x011E; // Ð -> Ğ
+    default:   return uni;
+    }
+}
+
 static inline bool isCidFontActiveGPU(const pdf::PdfFontInfo* f) {
     if (!f) return false;
     if (f->isCidFont) return true;
@@ -1556,6 +1570,17 @@ namespace pdf
                     else gid = (FT_UInt)cid;
                 }
 
+                // CID→GID ile glif bulunamadıysa ToUnicode → charmap fallback
+                if (gid == 0 && !font->cidToUnicode.empty()) {
+                    auto it = font->cidToUnicode.find((uint16_t)cid);
+                    if (it != font->cidToUnicode.end() && it->second != 0) {
+                        FT_UInt uniGid = FT_Get_Char_Index(face, (FT_ULong)it->second);
+                        if (uniGid > 0) {
+                            gid = uniGid;
+                        }
+                    }
+                }
+
                 double advPx = getAdvancePx(cid);
 
                 // Use CPU GlyphCache for glyph rendering
@@ -1613,9 +1638,11 @@ namespace pdf
                     // codeToUnicode - with bounds check (256 element array)
                     if (font->hasSimpleMap && c < 256 && font->codeToUnicode[c] != 0) {
                         uni = font->codeToUnicode[c];
+                        uni = FixTurkishGPU(uni);
                     }
                     else if (c < 256) {
                         uni = WinAnsiGPU[c];
+                        uni = FixTurkishGPU(uni);
                     }
 
                     if (uni != 0 && face->num_charmaps > 0) {

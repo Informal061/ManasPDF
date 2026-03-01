@@ -1190,6 +1190,60 @@ namespace pdf
                             }
                         }
 
+                        // ═══════════════════════════════════════════════════════════
+                        // CP1254 (Türkçe) Differences override:
+                        // CP1252 ve CP1254 arasında farklı olan 6 pozisyon:
+                        //   0xD0: Ð→Ğ, 0xDD: Ý→İ, 0xDE: Þ→Ş
+                        //   0xF0: ð→ğ, 0xFD: ý→ı, 0xFE: þ→ş
+                        // Subset fontlarda direct code→cmap bu pozisyonlarda Latin-1
+                        // glifi (Ð,Ý,Þ,ð,ý,þ) bulur. Ama /Differences Türkçe glyph
+                        // adı veriyorsa (Gbreve, Scedilla vs.), doğru Türkçe GID ile
+                        // override et. codeToGid zaten dolu olsa bile üzerine yazar.
+                        // ═══════════════════════════════════════════════════════════
+                        {
+                            static const struct { int code; const char* turkishName; uint32_t turkishUnicode; } cp1254Fix[] = {
+                                { 0xD0, "Gbreve",     0x011E },  // Ğ (Latin-1: Eth/Ð)
+                                { 0xDD, "Idotaccent", 0x0130 },  // İ (Latin-1: Yacute/Ý)
+                                { 0xDE, "Scedilla",   0x015E },  // Ş (Latin-1: Thorn/Þ)
+                                { 0xF0, "gbreve",     0x011F },  // ğ (Latin-1: eth/ð)
+                                { 0xFD, "dotlessi",   0x0131 },  // ı (Latin-1: yacute/ý)
+                                { 0xFE, "scedilla",   0x015F },  // ş (Latin-1: thorn/þ)
+                            };
+                            for (auto& tf : cp1254Fix) {
+                                // Sadece Differences açıkça Türkçe glyph adı veriyorsa override et.
+                                // Bu, re-encoded fontları (THY bileti gibi) etkilemez.
+                                if (info.codeToGlyphName[tf.code] == tf.turkishName) {
+                                    // Türkçe Unicode'u charmap'te ara
+                                    FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)tf.turkishUnicode);
+                                    if (gi > 0) {
+                                        info.codeToGid[tf.code] = (uint16_t)gi;
+                                    }
+                                    // Glyph name ile de dene (CFF fontlar için)
+                                    else if (!nameToGid.empty()) {
+                                        auto it = nameToGid.find(tf.turkishName);
+                                        if (it != nameToGid.end()) {
+                                            info.codeToGid[tf.code] = (uint16_t)it->second;
+                                        }
+                                    }
+                                }
+                                // codeToGid hâlâ 0 ise ve glyph adı boşsa, eski fallback
+                                else if (info.codeToGid[tf.code] == 0) {
+                                    if (!nameToGid.empty()) {
+                                        auto it = nameToGid.find(tf.turkishName);
+                                        if (it != nameToGid.end()) {
+                                            info.codeToGid[tf.code] = (uint16_t)it->second;
+                                        }
+                                    }
+                                    if (info.codeToGid[tf.code] == 0) {
+                                        FT_UInt gi = FT_Get_Char_Index(tempFace, (FT_ULong)tf.turkishUnicode);
+                                        if (gi > 0) {
+                                            info.codeToGid[tf.code] = (uint16_t)gi;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         info.hasCodeToGid = true;
 
                         // ═══════════════════════════════════════════════════════════

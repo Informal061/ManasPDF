@@ -874,6 +874,18 @@ namespace pdf
                     else gid = (FT_UInt)cid;
                 }
 
+                // CID→GID ile glif bulunamadıysa ToUnicode → charmap fallback
+                // Embedded fontlarda bile CIDToGIDMap eksik/hatalı olabilir
+                if (gid == 0 && !font->cidToUnicode.empty()) {
+                    auto it = font->cidToUnicode.find((uint16_t)cid);
+                    if (it != font->cidToUnicode.end() && it->second != 0) {
+                        FT_UInt uniGid = FT_Get_Char_Index(face, (FT_ULong)it->second);
+                        if (uniGid > 0) {
+                            gid = uniGid;
+                        }
+                    }
+                }
+
                 // DEBUG: Her karakter icin log
                 {
                     static FILE* cidDbg = fopen("C:\\temp\\cid_debug.txt", "a");
