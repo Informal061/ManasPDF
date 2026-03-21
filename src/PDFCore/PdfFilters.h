@@ -57,6 +57,10 @@ namespace pdf
             bool encodedByteAlign
         );
 
+        // --- JBIG2 Decode ---
+        // Note: Actual decoding handled in Jbig2Decoder.
+        // This is a pass-through marker in the filter chain.
+
         // --- Filter Chain Processing ---
         static bool Decode(const std::vector<uint8_t>& input,
             const std::vector<std::string>& filters,

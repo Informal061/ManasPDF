@@ -5,7 +5,7 @@
 <h1 align="center">ManasPDF</h1>
 
 <p align="center">
-  <a href=""><img src="https://img.shields.io/badge/version-0.1.3--alpha-orange" alt="Version"></a>
+  <a href=""><img src="https://img.shields.io/badge/version-0.2.0--alpha-orange" alt="Version"></a>
   <a href=""><img src="https://img.shields.io/badge/status-in%20development-yellow" alt="Status"></a>
   <a href=""><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 </p>
@@ -53,6 +53,7 @@ ManasPDF is a from-scratch PDF rendering engine built on **Direct2D** for GPU-ac
 | Flate/Deflate | FlateDecode | zlib |
 | LZW | LZWDecode | Built-in |
 | CCITT Fax | CCITTFaxDecode | Built-in (Group 3/4) |
+| JBIG2 | JBIG2Decode | Built-in (custom decoder) |
 | ASCII85 | ASCII85Decode | Built-in |
 | RunLength | RunLengthDecode | Built-in |
 | PNG Predictor | - | Built-in (Up/Sub/Avg/Paeth) |
@@ -365,6 +366,32 @@ ManasPDF/
 See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for full license texts.
 
 ## Changelog
+
+### 0.2.0-alpha (2026-03-21)
+
+**New Feature: JBIG2 Image Decoder**
+- Full JBIG2 bi-level image decoder written from scratch (ITU T.88 / ISO 14492), no external libraries
+- **Arithmetic coding** — QM coder (software convention) with full context modeling
+- **MMR encoding** — ITU T.6 Group 4 fax decoding for generic regions, pattern dictionaries, and halftone bit planes
+- **Generic regions** — Templates 0-3, adaptive template pixels, typical prediction (TPGDON)
+- **Refinement regions** — Templates 0-1, shared GR context across symbol dictionaries
+- **Symbol dictionaries** — Aggregate refinement (SDREFAGG), embedded text regions, shared GB/GR/integer contexts
+- **Text regions** — Inline refinement (SBREFINE), all reference corners (TOPLEFT/TOPRIGHT/BOTTOMLEFT/BOTTOMRIGHT), transposed mode, configurable strip parameters
+- **Pattern dictionaries** — Collective bitmap decoding with inter-pattern AT context
+- **Halftone regions** — Gray-scale bit plane decoding, Gray-code to binary conversion, grid-based pattern placement with rotation support
+- **Page composition** — OR, AND, XOR, XNOR, REPLACE operators with striped page support (dynamic page growth for initially unknown height)
+- **JBIG2 Globals** — Separate global symbol dictionary streams (PDF DecodeParms)
+- *Not yet implemented: Huffman coding (SDHUFF/SBHUFF), ENABLESKIP for halftone regions — these are rarely used in practice*
+
+**Bug Fixes**
+- Fixed text overflow/overlap in PDFs using non-uniform scale text matrices
+  - Character/word spacing now scaled with X-axis instead of Y-axis
+  - Glyph horizontal advance uses X-scale based size instead of Y-scale
+  - Text clipped to active clipping path via pushClipPath in BT / popClipPath in ET
+- Fixed transparency/opacity not applied to images, gradients, and tiling patterns
+  - ExtGState `ca` (fill alpha) parameter now correctly passed to `drawImage`, `fillPathWithGradient`, and `fillPathWithPattern`
+  - GPU renderer: `ID2D1Brush::SetOpacity()` for gradients/patterns, `DrawBitmap` opacity for images
+  - CPU renderer: alpha blending for all image and gradient pixel output
 
 ### 0.1.3-alpha (2026-03-02)
 

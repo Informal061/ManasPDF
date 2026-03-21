@@ -927,7 +927,8 @@ namespace pdf
         const PdfGradient& gradient,
         const PdfMatrix& ctm,
         const PdfMatrix& gradientCTM,
-        bool evenOdd)
+        bool evenOdd,
+        float alpha)
     {
         if (!_renderTarget || path.empty()) return;
 
@@ -946,6 +947,9 @@ namespace pdf
             geometry->Release();
             return;
         }
+
+        if (alpha < 1.0f)
+            brush->SetOpacity(alpha);
 
         bool wasInDraw = _inDraw;
         if (!_inDraw) beginDraw();
@@ -1048,7 +1052,8 @@ namespace pdf
         const std::vector<PdfPathSegment>& path,
         const PdfPattern& pattern,
         const PdfMatrix& ctm,
-        bool evenOdd)
+        bool evenOdd,
+        float alpha)
     {
         if (!_renderTarget || path.empty()) return;
 
@@ -1069,6 +1074,7 @@ namespace pdf
             _renderTarget->CreateSolidColorBrush(toD2DColor(pattern.baseColor), &solidBrush);
             if (solidBrush)
             {
+                if (alpha < 1.0f) solidBrush->SetOpacity(alpha);
                 bool wasInDraw = _inDraw;
                 if (!_inDraw) beginDraw();
                 _renderTarget->FillGeometry(geometry, solidBrush);
@@ -1078,6 +1084,9 @@ namespace pdf
             geometry->Release();
             return;
         }
+
+        if (alpha < 1.0f)
+            brush->SetOpacity(alpha);
 
         bool wasInDraw = _inDraw;
         if (!_inDraw) beginDraw();
@@ -2221,7 +2230,8 @@ namespace pdf
     void PdfPainterGPU::drawImage(
         const std::vector<uint8_t>& argb,
         int imgW, int imgH,
-        const PdfMatrix& ctm)
+        const PdfMatrix& ctm,
+        float alpha)
     {
         if (!_renderTarget || argb.empty()) return;
         if (imgW <= 0 || imgH <= 0) return;
@@ -2349,7 +2359,7 @@ namespace pdf
         if (!bitmap) { if (!wasInDraw) endDraw(); return; }
 
         D2D1_RECT_F destRect = D2D1::RectF((float)left, (float)top, (float)right, (float)bottom);
-        drawBitmapHighQuality(bitmap, destRect);
+        drawBitmapHighQuality(bitmap, destRect, alpha);
 
         if (!wasInDraw) endDraw();
         bitmap->Release();
@@ -2360,7 +2370,8 @@ namespace pdf
         int imgW, int imgH,
         const PdfMatrix& ctm,
         int clipMinX, int clipMinY,
-        int clipMaxX, int clipMaxY)
+        int clipMaxX, int clipMaxY,
+        float alpha)
     {
         if (!_renderTarget || argb.empty()) return;
         if (imgW <= 0 || imgH <= 0) return;
@@ -2406,7 +2417,7 @@ namespace pdf
         if (bitmap)
         {
             D2D1_RECT_F destRect = D2D1::RectF(minX, minY, maxX, maxY);
-            drawBitmapHighQuality(bitmap, destRect);
+            drawBitmapHighQuality(bitmap, destRect, alpha);
             bitmap->Release();
         }
 
@@ -2423,7 +2434,8 @@ namespace pdf
         const PdfMatrix& clipCTM,
         bool hasRectClip,
         double rectMinX, double rectMinY,
-        double rectMaxX, double rectMaxY)
+        double rectMaxX, double rectMaxY,
+        float alpha)
     {
         if (!_renderTarget || argb.empty()) return;
         if (imgW <= 0 || imgH <= 0) return;
@@ -2534,7 +2546,7 @@ namespace pdf
 
             _renderTarget->SetTransform(imageTransform);
             D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)bitmapW, (float)bitmapH);
-            drawBitmapHighQuality(bitmap, destRect);
+            drawBitmapHighQuality(bitmap, destRect, alpha);
             _renderTarget->SetTransform(oldTransform);
 
             bitmap->Release();

@@ -989,7 +989,8 @@ namespace pdf
                         _currentPath,
                         pattern,
                         _gs.ctm,
-                        false // evenOdd
+                        false, // evenOdd
+                        (float)_gs.fillAlpha
                     );
 
                     _currentPath.clear();
@@ -1010,7 +1011,8 @@ namespace pdf
                         gradient,
                         _gs.ctm,        // clip/path CTM
                         gradientCTM,    // gradient CTM = PatternMatrix * CTM
-                        false           // even-odd = false
+                        false,          // even-odd = false
+                        (float)_gs.fillAlpha
                     );
 
                     _currentPath.clear();
@@ -2357,7 +2359,8 @@ namespace pdf
                         _currentPath,
                         pattern,
                         _gs.ctm,
-                        true // evenOdd
+                        true, // evenOdd
+                        (float)_gs.fillAlpha
                     );
 
                     _currentPath.clear();
@@ -2369,16 +2372,6 @@ namespace pdf
 
                 if (resolvePatternToGradient(_gs.fillPatternName, gradient, patternMatrix))
                 {
-                    // DEBUG
-                    {
-                        FILE* tdbg = fopen("C:\\temp\\tile_debug.txt", "a");
-                        if (tdbg) {
-                            fprintf(tdbg, "  resolvePatternToGradient SUCCESS: '%s', stops=%zu, type=%d\n",
-                                _gs.fillPatternName.c_str(), gradient.stops.size(), gradient.type);
-                            fclose(tdbg);
-                        }
-                    }
-
                     PdfMatrix gradientCTM = PdfMul(patternMatrix, _gs.ctm);
 
                     _painter->fillPathWithGradient(
@@ -2386,7 +2379,8 @@ namespace pdf
                         gradient,
                         _gs.ctm,
                         gradientCTM,
-                        true  // even-odd = true
+                        true,  // even-odd = true
+                        (float)_gs.fillAlpha
                     );
 
                     _currentPath.clear();
@@ -2469,7 +2463,7 @@ namespace pdf
                 if (resolvePattern(_gs.fillPatternName, pattern))
                 {
                     if (pattern.isUncolored) pattern.baseColor = rgbToArgbWithAlpha(_gs.fillColor, _gs.fillAlpha);
-                    _painter->fillPathWithPattern(_currentPath, pattern, _gs.ctm, false);
+                    _painter->fillPathWithPattern(_currentPath, pattern, _gs.ctm, false, (float)_gs.fillAlpha);
                     patternFilled = true;
                 }
                 else
@@ -2480,7 +2474,7 @@ namespace pdf
                     if (resolvePatternToGradient(_gs.fillPatternName, gradient, patternMatrix))
                     {
                         PdfMatrix gradientCTM = PdfMul(patternMatrix, _gs.ctm);
-                        _painter->fillPathWithGradient(_currentPath, gradient, _gs.ctm, gradientCTM, false);
+                        _painter->fillPathWithGradient(_currentPath, gradient, _gs.ctm, gradientCTM, false, (float)_gs.fillAlpha);
                         patternFilled = true;
                     }
                     else
@@ -3027,7 +3021,8 @@ namespace pdf
                 gradient,
                 _clippingPathCTM,
                 shadingCTM,
-                false
+                false,
+                (float)_gs.fillAlpha
             );
 
             _currentPath.clear();
@@ -3783,16 +3778,16 @@ namespace pdf
                         }
                         LogDebug("Drawing image with rect clip (%zu segs)", _clippingPath.size());
                         _painter->drawImageWithClipRect(argb, iw, ih, image_ctm,
-                            (int)minX, (int)minY, (int)maxX, (int)maxY);
+                            (int)minX, (int)minY, (int)maxX, (int)maxY, (float)_gs.fillAlpha);
                     } else {
                         // Complex clip path - use drawImageClipped
                         LogDebug("Drawing image with complex clip (%zu segs)", _clippingPath.size());
                         _painter->drawImageClipped(argb, iw, ih, image_ctm,
-                            _clippingPath, _clippingPathCTM);
+                            _clippingPath, _clippingPathCTM, false, 0, 0, 0, 0, (float)_gs.fillAlpha);
                     }
                 } else {
                     LogDebug("Drawing image (no clip)");
-                    _painter->drawImage(argb, iw, ih, image_ctm);
+                    _painter->drawImage(argb, iw, ih, image_ctm, (float)_gs.fillAlpha);
                 }
                 LogDebug("Image drawn");
             }
@@ -4450,7 +4445,8 @@ namespace pdf
             gradient,
             _gs.ctm,    // path CTM
             _gs.ctm,    // gradient CTM (sh uses current coordinate system directly)
-            false        // even-odd
+            false,       // even-odd
+            (float)_gs.fillAlpha
         );
     }
 

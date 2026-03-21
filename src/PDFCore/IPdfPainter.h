@@ -55,14 +55,16 @@ namespace pdf
             const PdfGradient& gradient,
             const PdfMatrix& ctm,
             const PdfMatrix& gradientCTM,
-            bool evenOdd = false) = 0;
+            bool evenOdd = false,
+            float alpha = 1.0f) = 0;
 
         // Pattern Fill
         virtual void fillPathWithPattern(
             const std::vector<PdfPathSegment>& path,
             const PdfPattern& pattern,
             const PdfMatrix& ctm,
-            bool evenOdd = false) = 0;
+            bool evenOdd = false,
+            float alpha = 1.0f) = 0;
 
         // Text Rendering
         virtual double drawTextFreeTypeRaw(
@@ -81,14 +83,16 @@ namespace pdf
         virtual void drawImage(
             const std::vector<uint8_t>& argb,
             int imgW, int imgH,
-            const PdfMatrix& ctm) = 0;
+            const PdfMatrix& ctm,
+            float alpha = 1.0f) = 0;
 
         virtual void drawImageWithClipRect(
             const std::vector<uint8_t>& argb,
             int imgW, int imgH,
             const PdfMatrix& ctm,
             int clipMinX, int clipMinY,
-            int clipMaxX, int clipMaxY) = 0;
+            int clipMaxX, int clipMaxY,
+            float alpha = 1.0f) = 0;
 
         virtual void drawImageClipped(
             const std::vector<uint8_t>& argb,
@@ -98,7 +102,8 @@ namespace pdf
             const PdfMatrix& clipCTM,
             bool hasRectClip = false,
             double rectMinX = 0, double rectMinY = 0,
-            double rectMaxX = 0, double rectMaxY = 0) = 0;
+            double rectMaxX = 0, double rectMaxY = 0,
+            float alpha = 1.0f) = 0;
 
         // State
         virtual void setPageRotation(int degrees, double pageWPt, double pageHPt) = 0;

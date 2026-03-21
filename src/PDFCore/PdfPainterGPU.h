@@ -71,13 +71,15 @@ namespace pdf
             const PdfGradient& gradient,
             const PdfMatrix& ctm,
             const PdfMatrix& gradientCTM,
-            bool evenOdd = false) override;
+            bool evenOdd = false,
+            float alpha = 1.0f) override;
 
         void fillPathWithPattern(
             const std::vector<PdfPathSegment>& path,
             const PdfPattern& pattern,
             const PdfMatrix& ctm,
-            bool evenOdd = false) override;
+            bool evenOdd = false,
+            float alpha = 1.0f) override;
 
         double drawTextFreeTypeRaw(
             double x, double y,
@@ -94,14 +96,16 @@ namespace pdf
         void drawImage(
             const std::vector<uint8_t>& argb,
             int imgW, int imgH,
-            const PdfMatrix& ctm) override;
+            const PdfMatrix& ctm,
+            float alpha = 1.0f) override;
 
         void drawImageWithClipRect(
             const std::vector<uint8_t>& argb,
             int imgW, int imgH,
             const PdfMatrix& ctm,
             int clipMinX, int clipMinY,
-            int clipMaxX, int clipMaxY) override;
+            int clipMaxX, int clipMaxY,
+            float alpha = 1.0f) override;
 
         void drawImageClipped(
             const std::vector<uint8_t>& argb,
@@ -111,7 +115,8 @@ namespace pdf
             const PdfMatrix& clipCTM,
             bool hasRectClip = false,
             double rectMinX = 0, double rectMinY = 0,
-            double rectMaxX = 0, double rectMaxY = 0) override;
+            double rectMaxX = 0, double rectMaxY = 0,
+            float alpha = 1.0f) override;
 
         void setPageRotation(int degrees, double pageWPt, double pageHPt) override;
 

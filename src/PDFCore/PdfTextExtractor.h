@@ -75,10 +75,10 @@ namespace pdf
             const PdfMatrix&, int, int, double) override {
         }
         void fillPathWithGradient(const std::vector<PdfPathSegment>&, const PdfGradient&,
-            const PdfMatrix&, const PdfMatrix&, bool) override {
+            const PdfMatrix&, const PdfMatrix&, bool, float) override {
         }
         void fillPathWithPattern(const std::vector<PdfPathSegment>&, const PdfPattern&,
-            const PdfMatrix&, bool) override {
+            const PdfMatrix&, bool, float) override {
         }
 
         double drawTextFreeTypeRaw(
@@ -93,13 +93,13 @@ namespace pdf
             double horizScale,
             double textAngle = 0.0) override;
 
-        void drawImage(const std::vector<uint8_t>&, int, int, const PdfMatrix&) override {}
+        void drawImage(const std::vector<uint8_t>&, int, int, const PdfMatrix&, float) override {}
         void drawImageWithClipRect(const std::vector<uint8_t>&, int, int,
-            const PdfMatrix&, int, int, int, int) override {
+            const PdfMatrix&, int, int, int, int, float) override {
         }
         void drawImageClipped(const std::vector<uint8_t>&, int, int,
             const PdfMatrix&, const std::vector<PdfPathSegment>&,
-            const PdfMatrix&, bool, double, double, double, double) override {
+            const PdfMatrix&, bool, double, double, double, double, float) override {
         }
 
         void setPageRotation(int degrees, double pageWPt, double pageHPt) override;

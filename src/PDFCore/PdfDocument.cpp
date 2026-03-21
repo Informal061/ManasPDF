@@ -14,6 +14,7 @@
 #include "FontCache.h"
 #include "zlib.h"
 #include "PdfFilters.h"
+#include "Jbig2Decoder.h"
 #include <algorithm>
 #include <map>
 #include <cctype>
@@ -2735,12 +2736,14 @@ namespace pdf
         bool isDCT = false;
         bool isJPX = false;
         bool isCCITT = false;
+        bool isJBIG2 = false;
 
         for (const auto& f : filters)
         {
             if (f == "/DCTDecode" || f == "DCTDecode") isDCT = true;
             if (f == "/JPXDecode" || f == "JPXDecode") isJPX = true;
             if (f == "/CCITTFaxDecode" || f == "CCITTFaxDecode") isCCITT = true;
+            if (f == "/JBIG2Decode" || f == "JBIG2Decode") isJBIG2 = true;
         }
 
         // ================================================================
@@ -2764,6 +2767,69 @@ namespace pdf
                 // WIC decode failed
                 return false;
             }
+        }
+
+        // ================================================================
+        // JBIG2Decode
+        // ================================================================
+        if (isJBIG2)
+        {
+            // Check for JBIG2Globals in DecodeParms
+            std::vector<uint8_t> globals;
+            auto dpObj = dict->get("/DecodeParms");
+            if (!dpObj) dpObj = dict->get("DecodeParms");
+            if (dpObj) {
+                v.clear();
+                auto dp = std::dynamic_pointer_cast<PdfDictionary>(resolveIndirect(dpObj, v));
+                if (dp) {
+                    auto globalsRef = dp->get("/JBIG2Globals");
+                    if (!globalsRef) globalsRef = dp->get("JBIG2Globals");
+                    if (globalsRef) {
+                        v.clear();
+                        auto globalsStream = std::dynamic_pointer_cast<PdfStream>(resolveIndirect(globalsRef, v));
+                        if (globalsStream) {
+                            globals = globalsStream->data;
+                        }
+                    }
+                }
+            }
+
+            // Decode JBIG2
+            std::vector<uint8_t> jbig2Bits;
+            int jbig2W = 0, jbig2H = 0;
+            if (Jbig2Decoder::decode(st->data, globals, jbig2Bits, jbig2W, jbig2H))
+            {
+                // Use page dimensions from JBIG2 if available, otherwise from PDF dict
+                if (jbig2W > 0 && jbig2H > 0) {
+                    w = jbig2W;
+                    h = jbig2H;
+                }
+
+                // Convert 1-bit packed bitmap to ARGB
+                int rowBytes = (w + 7) / 8;
+                argb.resize((size_t)w * (size_t)h * 4);
+
+                for (int row = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++) {
+                        int byteIdx = row * rowBytes + col / 8;
+                        int bitIdx = 7 - (col % 8);
+
+                        uint8_t val = 255; // Default white
+                        if (byteIdx < (int)jbig2Bits.size()) {
+                            int bit = (jbig2Bits[byteIdx] >> bitIdx) & 1;
+                            val = bit ? 0 : 255; // bit=1 means black
+                        }
+
+                        int i = row * w + col;
+                        argb[i * 4 + 0] = val;
+                        argb[i * 4 + 1] = val;
+                        argb[i * 4 + 2] = val;
+                        argb[i * 4 + 3] = 255;
+                    }
+                }
+                return true;
+            }
+            return false;
         }
 
         // ================================================================

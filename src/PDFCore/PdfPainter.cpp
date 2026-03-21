@@ -1417,7 +1417,8 @@ namespace pdf
         const std::vector<uint8_t>& rgba,
         int imgW,
         int imgH,
-        const PdfMatrix& ctm)
+        const PdfMatrix& ctm,
+        float alpha)
     {
         if (imgW <= 0 || imgH <= 0) return;
         if ((int)rgba.size() < imgW * imgH * 4) return;
@@ -1591,6 +1592,10 @@ namespace pdf
                 uint8_t srcB = (uint8_t)linearToSrgb(out[2]);
                 uint8_t srcA = (uint8_t)(out[3] * 255.0);
 
+                // Apply ExtGState alpha (ca parameter)
+                if (alpha < 1.0f)
+                    srcA = (uint8_t)(srcA * alpha);
+
                 // Tamamen şeffaf pikselleri atla
                 if (srcA == 0)
                     continue;
@@ -1598,48 +1603,19 @@ namespace pdf
                 // Alpha blending uygula
                 if (srcA < 255)
                 {
-                    // Arka plan rengini al
                     uint8_t dstB = _buffer[di + 0];
                     uint8_t dstG = _buffer[di + 1];
                     uint8_t dstR = _buffer[di + 2];
 
-                    // Alpha blend: out = src * alpha + dst * (1 - alpha)
-                    int alpha = srcA;
-                    int invAlpha = 255 - alpha;
+                    int a = srcA;
+                    int invA = 255 - a;
 
-                    srcR = (uint8_t)((srcR * alpha + dstR * invAlpha) / 255);
-                    srcG = (uint8_t)((srcG * alpha + dstG * invAlpha) / 255);
-                    srcB = (uint8_t)((srcB * alpha + dstB * invAlpha) / 255);
+                    srcR = (uint8_t)((srcR * a + dstR * invA) / 255);
+                    srcG = (uint8_t)((srcG * a + dstG * invA) / 255);
+                    srcB = (uint8_t)((srcB * a + dstB * invA) / 255);
                 }
 
                 // Write BGRA
-                // DEBUG: Detect image overwriting colored pixels  
-                {
-                    static FILE* imgOverwriteDebug = nullptr;
-                    static int imgOverwriteCount = 0;
-                    static bool imgOverwriteInit = false;
-                    if (!imgOverwriteInit) {
-                        char tempPath[MAX_PATH];
-                        GetTempPathA(MAX_PATH, tempPath);
-                        strcat_s(tempPath, "img_overwrite_debug.txt");
-                        imgOverwriteDebug = fopen(tempPath, "w");
-                        imgOverwriteInit = true;
-                    }
-
-                    bool isRightEdge = (px > 1100 && px < 1200);
-                    bool isMiddleY = (py > 300 && py < 600);
-                    uint8_t oldB = _buffer[di + 0];
-                    uint8_t oldG = _buffer[di + 1];
-                    uint8_t oldR = _buffer[di + 2];
-                    bool oldIsColored = !(oldB == 255 && oldG == 255 && oldR == 255);
-
-                    if (imgOverwriteDebug && isRightEdge && isMiddleY && oldIsColored && imgOverwriteCount < 100) {
-                        fprintf(imgOverwriteDebug, "*** IMAGE OVERWRITE *** (%d, %d): RGB(%d,%d,%d) -> RGB(%d,%d,%d)\n",
-                            px, py, oldR, oldG, oldB, srcR, srcG, srcB);
-                        imgOverwriteCount++;
-                        fflush(imgOverwriteDebug);
-                    }
-                }
                 _buffer[di + 0] = srcB;
                 _buffer[di + 1] = srcG;
                 _buffer[di + 2] = srcR;
@@ -1656,7 +1632,8 @@ namespace pdf
         int imgW,
         int imgH,
         const PdfMatrix& ctm,
-        int clipMinX, int clipMinY, int clipMaxX, int clipMaxY)
+        int clipMinX, int clipMinY, int clipMaxX, int clipMaxY,
+        float alpha)
     {
         if (imgW <= 0 || imgH <= 0) return;
         if ((int)rgba.size() < imgW * imgH * 4) return;
@@ -1787,6 +1764,10 @@ namespace pdf
                 uint8_t srcB = (uint8_t)linearToSrgb(out[2]);
                 uint8_t srcA = (uint8_t)(out[3] * 255.0);
 
+                // Apply ExtGState alpha (ca parameter)
+                if (alpha < 1.0f)
+                    srcA = (uint8_t)(srcA * alpha);
+
                 // Tamamen şeffaf pikselleri atla
                 if (srcA == 0)
                     continue;
@@ -1794,18 +1775,16 @@ namespace pdf
                 // Alpha blending uygula
                 if (srcA < 255)
                 {
-                    // Arka plan rengini al
                     uint8_t dstB = _buffer[di + 0];
                     uint8_t dstG = _buffer[di + 1];
                     uint8_t dstR = _buffer[di + 2];
 
-                    // Alpha blend: out = src * alpha + dst * (1 - alpha)
-                    int alpha = srcA;
-                    int invAlpha = 255 - alpha;
+                    int a = srcA;
+                    int invA = 255 - a;
 
-                    srcR = (uint8_t)((srcR * alpha + dstR * invAlpha) / 255);
-                    srcG = (uint8_t)((srcG * alpha + dstG * invAlpha) / 255);
-                    srcB = (uint8_t)((srcB * alpha + dstB * invAlpha) / 255);
+                    srcR = (uint8_t)((srcR * a + dstR * invA) / 255);
+                    srcG = (uint8_t)((srcG * a + dstG * invA) / 255);
+                    srcB = (uint8_t)((srcB * a + dstB * invA) / 255);
                 }
 
                 // Write BGRA
@@ -1829,14 +1808,15 @@ namespace pdf
         const PdfMatrix& clipCTM,
         bool hasRectClip,
         double rectMinX, double rectMinY,
-        double rectMaxX, double rectMaxY)
+        double rectMaxX, double rectMaxY,
+        float alpha)
     {
         if (imgW <= 0 || imgH <= 0) return;
         if ((int)rgba.size() < imgW * imgH * 4) return;
 
         // Clipping path yoksa normal drawImage kullan
         if (clipPath.empty()) {
-            drawImage(rgba, imgW, imgH, imageCTM);
+            drawImage(rgba, imgW, imgH, imageCTM, alpha);
             return;
         }
 
@@ -2101,13 +2081,28 @@ namespace pdf
                 uint8_t srcB = (uint8_t)linearToSrgb(out[2]);
 
                 // =====================================================
-                // ✅ BEYAZ PİKSELLERİ SAYDAM YAP (Adobe uyumluluğu)
-                // Threshold düşürüldü (250→220) JPEG artifacts için
+                // BEYAZ PİKSELLERİ SAYDAM YAP (Adobe uyumluluğu)
                 // =====================================================
                 const uint8_t WHITE_THRESHOLD = 220;
 
                 if (srcR >= WHITE_THRESHOLD && srcG >= WHITE_THRESHOLD && srcB >= WHITE_THRESHOLD) {
-                    continue; // Bu pikseli çizme, arka plan görünsün
+                    continue;
+                }
+
+                // Apply ExtGState alpha (ca parameter)
+                if (alpha < 1.0f)
+                {
+                    uint8_t srcA = (uint8_t)(alpha * 255.0f);
+                    uint8_t dstB = _buffer[di + 0];
+                    uint8_t dstG = _buffer[di + 1];
+                    uint8_t dstR = _buffer[di + 2];
+
+                    int a = srcA;
+                    int invA = 255 - a;
+
+                    srcR = (uint8_t)((srcR * a + dstR * invA) / 255);
+                    srcG = (uint8_t)((srcG * a + dstG * invA) / 255);
+                    srcB = (uint8_t)((srcB * a + dstB * invA) / 255);
                 }
 
                 _buffer[di + 0] = srcB;
@@ -2935,7 +2930,8 @@ namespace pdf
         const std::vector<PdfPathSegment>& path,
         const PdfPattern& pattern,
         const PdfMatrix& ctm,
-        bool evenOdd)
+        bool evenOdd,
+        float alpha)
     {
         if (pattern.width <= 0 || pattern.height <= 0 || pattern.buffer.empty()) return;
 
@@ -3077,18 +3073,22 @@ namespace pdf
 
                     // Uncolored Pattern Masking
                     if (pattern.isUncolored) {
-                        // Alpha of mask * Base Color
-                        uint8_t alpha = (srcColor >> 24) & 0xFF;
-                        // Veya grayscale intensity? Pattern genelde grayscale render edilir.
-                        // Render edilen buffer ARGB ise A kullanılır.
+                        uint8_t maskA = (srcColor >> 24) & 0xFF;
 
                         uint8_t baseA = (pattern.baseColor >> 24) & 0xFF;
                         uint8_t baseR = (pattern.baseColor >> 16) & 0xFF;
                         uint8_t baseG = (pattern.baseColor >> 8) & 0xFF;
                         uint8_t baseB = (pattern.baseColor) & 0xFF;
 
-                        uint8_t finalA = (uint8_t)((alpha * baseA) / 255);
+                        uint8_t finalA = (uint8_t)((maskA * baseA) / 255);
                         srcColor = (finalA << 24) | (baseR << 16) | (baseG << 8) | baseB;
+                    }
+
+                    // Apply ExtGState alpha (ca parameter)
+                    if (alpha < 1.0f) {
+                        uint8_t sa = (srcColor >> 24) & 0xFF;
+                        sa = (uint8_t)(sa * alpha);
+                        srcColor = (sa << 24) | (srcColor & 0x00FFFFFF);
                     }
 
                     // Blend process
@@ -3969,7 +3969,8 @@ namespace pdf
         const PdfGradient& gradient,
         const PdfMatrix& clipCTM,
         const PdfMatrix& gradientCTM,
-        bool evenOdd)
+        bool evenOdd,
+        float alpha)
     {
         // ========== DEBUG LOG ==========
         static FILE* gradDebugFile = nullptr;
@@ -4410,8 +4411,18 @@ namespace pdf
                         uint8_t gb = (uint8_t)std::clamp((int)(rgb[1] * 255.0 + 0.5), 0, 255);
                         uint8_t bb = (uint8_t)std::clamp((int)(rgb[2] * 255.0 + 0.5), 0, 255);
 
-                        uint32_t color = 0xFF000000u | (rb << 16) | (gb << 8) | bb;
-                        putPixel(x, y, color);
+                        if (alpha < 1.0f && (unsigned)x < (unsigned)_w && (unsigned)y < (unsigned)_h) {
+                            uint8_t sa = (uint8_t)(alpha * 255.0f);
+                            int invA = 255 - sa;
+                            size_t di = (size_t(y) * _w + x) * 4;
+                            _buffer[di + 0] = (uint8_t)((bb * sa + _buffer[di + 0] * invA) / 255);
+                            _buffer[di + 1] = (uint8_t)((gb * sa + _buffer[di + 1] * invA) / 255);
+                            _buffer[di + 2] = (uint8_t)((rb * sa + _buffer[di + 2] * invA) / 255);
+                            _buffer[di + 3] = 255;
+                        } else {
+                            uint32_t color = 0xFF000000u | (rb << 16) | (gb << 8) | bb;
+                            putPixel(x, y, color);
+                        }
                     }
                 }
             }
@@ -4444,8 +4455,18 @@ namespace pdf
                             uint8_t gb = (uint8_t)std::clamp((int)(rgb[1] * 255.0 + 0.5), 0, 255);
                             uint8_t bb = (uint8_t)std::clamp((int)(rgb[2] * 255.0 + 0.5), 0, 255);
 
-                            uint32_t color = 0xFF000000u | (rb << 16) | (gb << 8) | bb;
-                            putPixel(x, y, color);
+                            if (alpha < 1.0f && (unsigned)x < (unsigned)_w && (unsigned)y < (unsigned)_h) {
+                                uint8_t sa = (uint8_t)(alpha * 255.0f);
+                                int invA = 255 - sa;
+                                size_t di = (size_t(y) * _w + x) * 4;
+                                _buffer[di + 0] = (uint8_t)((bb * sa + _buffer[di + 0] * invA) / 255);
+                                _buffer[di + 1] = (uint8_t)((gb * sa + _buffer[di + 1] * invA) / 255);
+                                _buffer[di + 2] = (uint8_t)((rb * sa + _buffer[di + 2] * invA) / 255);
+                                _buffer[di + 3] = 255;
+                            } else {
+                                uint32_t color = 0xFF000000u | (rb << 16) | (gb << 8) | bb;
+                                putPixel(x, y, color);
+                            }
                         }
                     }
                 }
